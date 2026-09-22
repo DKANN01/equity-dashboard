@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Equity Returns &amp; Factors — Interactive Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#eef1f4; --ink:#10151d; --card:#ffffff; --border:#d7dde4; --muted:#5b6572;
+    --accent:#1c5cab; --accent-soft:#e4edf9;
+    --pos:#1c5cab; --neg:#c0362c;
+  }
+  [data-theme="dark"]{
+    --bg:#12161c; --ink:#f2f4f7; --card:#1a2029; --border:#2a323d; --muted:#9aa4b2;
+    --accent:#74aeef; --accent-soft:#1f2b3a;
+    --pos:#74aeef; --neg:#e5726a;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",-apple-system,Segoe UI,sans-serif; line-height:1.5;}
+  .wrap{max-width:900px; margin:0 auto; padding:0 20px;}
+  h1,h2,.brand-name{font-family:"Newsreader",Georgia,serif;}
+  a{color:var(--accent);}
+
+  .site-header{border-bottom:1px solid var(--border); padding:14px 0;}
+  .site-header .wrap{display:flex; align-items:center; justify-content:space-between;}
+  .brand-name{font-size:1.15rem; font-weight:600;}
+  .brand-tag{display:block; font-size:.78rem; color:var(--muted); font-family:"IBM Plex Sans",sans-serif;}
+  #theme-toggle{background:none; border:1px solid var(--border); color:var(--ink); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:.95rem;}
+
+  main{padding-bottom:60px;}
+  .intro{padding:28px 0 6px;}
+  .intro h1{font-size:1.85rem; margin:0 0 8px;}
+  .lede{color:var(--muted); max-width:70ch; font-size:.95rem;}
+  #asof{color:var(--muted); font-size:.82rem;}
+
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:20px 0;}
+  .tile{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px 12px;}
+  .tile .k{font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;}
+  .tile .v{font-size:1.15rem; font-weight:600; margin-top:2px;}
+  .tile .sub{font-size:.72rem; color:var(--muted); margin-top:4px;}
+
+  .tabs{display:flex; gap:6px; margin:26px 0 14px; border-bottom:1px solid var(--border); flex-wrap:wrap;}
+  .tab{background:none; border:none; padding:8px 14px; font-size:.88rem; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; font-family:inherit;}
+  .tab.active{color:var(--accent); border-bottom-color:var(--accent); font-weight:600;}
+
+  .legend{display:flex; flex-wrap:wrap; gap:16px; margin-bottom:18px; padding:12px 14px; background:var(--card); border:1px solid var(--border); border-radius:10px;}
+  .legend-group{display:flex; flex-direction:column; gap:6px;}
+  .legend-group .gtitle{font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:2px;}
+  .legend-item{display:flex; align-items:center; gap:6px; font-size:.82rem; cursor:pointer; user-select:none;}
+  .legend-item input{accent-color:var(--accent);}
+  .swatch{width:10px; height:10px; border-radius:2px; display:inline-block;}
+
+  .panel.hidden{display:none;}
+  .panel h2{font-size:1.05rem; margin:18px 0 8px;}
+
+  .range-slider{position:relative; height:28px; margin:6px 0 2px;}
+  .range-slider .track{position:absolute; top:12px; left:0; right:0; height:4px; background:var(--border); border-radius:2px;}
+  .range-slider .fill{position:absolute; top:12px; height:4px; background:var(--accent); border-radius:2px;}
+  .range-slider input[type=range]{position:absolute; top:0; left:0; width:100%; height:28px; margin:0; background:none; pointer-events:none; -webkit-appearance:none; appearance:none;}
+  .range-slider input[type=range]::-webkit-slider-runnable-track{background:transparent; height:28px;}
+  .range-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; pointer-events:auto; width:14px; height:14px; margin-top:7px; border-radius:50%; background:var(--accent); border:2px solid var(--card); box-shadow:0 0 0 1px var(--border); cursor:pointer;}
+  .range-slider input[type=range]::-moz-range-track{background:transparent; height:28px; border:none;}
+  .range-slider input[type=range]::-moz-range-thumb{pointer-events:auto; width:14px; height:14px; border-radius:50%; background:var(--accent); border:2px solid var(--card); cursor:pointer;}
+  .range-labels{display:flex; justify-content:space-between; font-size:.78rem; color:var(--muted); margin-bottom:12px;}
+  .range-labels strong{color:var(--ink);}
+  .chart{width:100%; height:260px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:relative;}
+  .chart svg{width:100%; height:100%; display:block; overflow:visible;}
+  .axis-label{font-size:9px; fill:var(--muted);}
+  .gridline{stroke:var(--border); stroke-width:1;}
+  .series-path{fill:none; stroke-width:1.6;}
+  .crosshair{stroke:var(--muted); stroke-width:1; stroke-dasharray:2,2;}
+  .tooltip{position:absolute; pointer-events:none; background:var(--card); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:.72rem; box-shadow:0 4px 12px rgba(0,0,0,.12); display:none; z-index:5; white-space:nowrap;}
+  .tooltip .tt-date{font-weight:600; margin-bottom:3px;}
+  .tooltip .tt-row{display:flex; align-items:center; gap:5px;}
+  .cap{font-size:.76rem; color:var(--muted); margin:8px 0 0;}
+
+  #corr-table table{border-collapse:collapse; width:100%; font-size:.78rem;}
+  #corr-table th,#corr-table td{border:1px solid var(--border); padding:6px 8px; text-align:center;}
+  #corr-table th{background:var(--card); font-weight:600;}
+
+  .sources{margin-top:36px; border-top:1px solid var(--border); padding-top:16px;}
+  .sources h2{font-size:1.05rem;}
+  .sources ul{font-size:.82rem; color:var(--muted); padding-left:18px;}
+  .site-footer{border-top:1px solid var(--border); padding:16px 0; color:var(--muted); font-size:.78rem;}
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <div>
+      <span class="brand-name">Equity Returns &amp; Factors</span>
+      <span class="brand-tag">An interactive teaching dashboard</span>
+    </div>
+    <button id="theme-toggle" type="button">Dark mode</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="intro">
+    <h1>Equity Returns &amp; Factor Dashboard</h1>
+    <p class="lede">Compare long-run equity index returns against AQR's published long/short factor premia. Toggle series on and off to explore dispersion across markets and correlation among factors. <span id="asof"></span></p>
+  </section>
+
+  <section class="range-panel">
+    <div class="range-slider" id="date-range">
+      <div class="track"></div>
+      <div class="fill" id="range-fill"></div>
+      <input type="range" id="range-start" min="0" max="0" value="0">
+      <input type="range" id="range-end" min="0" max="0" value="0">
+    </div>
+    <div class="range-labels">
+      <span id="range-start-label"></span>
+      <span id="range-end-label"></span>
+    </div>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="growth" type="button">Cumulative Growth</button>
+    <button class="tab" data-tab="rolling" type="button">Rolling 12-Month Return</button>
+    <button class="tab" data-tab="corr" type="button">Correlation</button>
+  </nav>
+
+  <section class="legend" id="legend"></section>
+
+  <section class="panel" id="panel-growth">
+    <div class="chart" id="chart-growth"></div>
+    <p class="cap">Growth of 100 compounding each series' own monthly return, rebased to 100 at the start of the selected date range (log scale). Factor series (Value, BAB, QMJ, Momentum) compound a long/short or long-only excess return and are not directly investable in this form — they illustrate the premium's behavior over time, not a tradable product.</p>
+  </section>
+
+  <section class="panel hidden" id="panel-rolling">
+    <div class="chart" id="chart-rolling"></div>
+    <p class="cap">Trailing 12-month compounded return, recalculated each month, over the selected date range. Wide dispersion between lines in the same month shows how differently these exposures behaved over the same period.</p>
+  </section>
+
+  <section class="panel hidden" id="panel-corr">
+    <h2>Pairwise correlation of monthly returns</h2>
+    <div id="corr-table"></div>
+    <p class="cap">Computed over each pair's overlapping monthly history (see tiles above for each series' date range). Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.</p>
+  </section>
+
+  <section class="sources">
+    <h2>Sources &amp; notes</h2>
+    <ul id="sources-list"></ul>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Built for classroom use. Data from AQR Capital Management's public datasets and Yahoo Finance. Not investment advice.</p>
+  </div>
+</footer>
+
+<script id="dataset" type="application/json">__DATASET_JSON__</script>
+<script>
+(function(){
+  "use strict";
+  var DATA = JSON.parse(document.getElementById('dataset').textContent);
+
+  var COLORS = {
+    SPX:  "#1c5cab",
+    EM:   "#d97706",
+    EAFE: "#059669",
+    MOM:  "#7c3aed",
+    VAL:  "#dc2626",
+    BAB:  "#0891b2",
+    QMJ:  "#db2777"
+  };
+  var ORDER = ["SPX","EM","EAFE","MOM","VAL","BAB","QMJ"];
+  var visible = {}; ORDER.forEach(function(k){ visible[k] = true; });
+
+  // ---------- theme ----------
+  var themeBtn = document.getElementById('theme-toggle');
+  function applyTheme(t){
+    document.documentElement.setAttribute('data-theme', t);
+    themeBtn.textContent = t === 'dark' ? 'Light mode' : 'Dark mode';
+    localStorage.setItem('eq-dash-theme', t);
+    renderAll();
+  }
+  themeBtn.addEventListener('click', function(){
+    applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  // ---------- helpers ----------
+  function monthKeyToDate(mk){
+    var parts = mk.split('-');
+    return new Date(Date.UTC(+parts[0], +parts[1]-1, 1));
+  }
+  function sortedPoints(key){
+    var obj = DATA.series[key].data;
+    return Object.keys(obj).sort().map(function(mk){
+      return { d: monthKeyToDate(mk), r: obj[mk] };
+    });
+  }
+  function cumulativeSeries(key){
+    var pts = sortedPoints(key), nav = 1, out = [];
+    for (var i=0;i<pts.length;i++){ nav *= (1+pts[i].r); out.push({d:pts[i].d, v:nav}); }
+    return out;
+  }
+  function rollingSeries(key, win){
+    win = win || 12;
+    var pts = sortedPoints(key), out = [];
+    for (var i=win-1;i<pts.length;i++){
+      var nav = 1;
+      for (var j=i-win+1;j<=i;j++) nav *= (1+pts[j].r);
+      out.push({d:pts[i].d, v: nav-1});
+    }
+    return out;
+  }
+  function stdev(arr){
+    var n = arr.length; if(n<2) return 0;
+    var m = arr.reduce(function(a,b){return a+b;},0)/n;
+    var v = arr.reduce(function(a,b){return a+(b-m)*(b-m);},0)/(n-1);
+    return Math.sqrt(v);
+  }
+  function fmtPct(x, d){ return (x*100).toFixed(d==null?1:d) + "%"; }
+  function fmtDate(d){ return d.toLocaleDateString('en-US',{month:'short', year:'numeric', timeZone:'UTC'}); }
+
+  function windowedStats(key, winStart, winEnd){
+    var pts = sortedPoints(key).filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; });
+    if (pts.length < 2) return null;
+    var rets = pts.map(function(p){return p.r;});
+    var nav = 1, cum = [];
+    pts.forEach(function(p){ nav *= (1+p.r); cum.push({d:p.d, v:nav}); });
+    var years = Math.max((cum[cum.length-1].d - cum[0].d) / (365.25*24*3600*1000), 1/12);
+    var cagr = Math.pow(nav, 1/years) - 1;
+    var vol = stdev(rets) * Math.sqrt(12);
+    var peak = -Infinity, maxDd = 0;
+    cum.forEach(function(p){ peak = Math.max(peak, p.v); maxDd = Math.min(maxDd, p.v/peak - 1); });
+    return { cagr: cagr, vol: vol, maxDd: maxDd, start: pts[0].d, end: pts[pts.length-1].d };
+  }
+
+  // ---------- tiles ----------
+  function renderTiles(winStart, winEnd){
+    var el = document.getElementById('tiles');
+    el.innerHTML = '';
+    ORDER.forEach(function(key){
+      var meta = DATA.series[key];
+      var s = windowedStats(key, winStart, winEnd);
+      var div = document.createElement('div');
+      div.className = 'tile';
+      if (!s){
+        div.innerHTML =
+          '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
+          '<div class="sub">No data in this window</div>';
+      } else {
+        div.innerHTML =
+          '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
+          '<div class="v">'+fmtPct(s.cagr)+' <span style="font-size:.65rem;color:var(--muted);font-weight:400;">CAGR</span></div>' +
+          '<div class="sub">Vol '+fmtPct(s.vol)+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
+          '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
+      }
+      el.appendChild(div);
+    });
+  }
+
+  // ---------- legend ----------
+  function renderLegend(){
+    var el = document.getElementById('legend');
+    el.innerHTML = '';
+    var groups = { index: { title:'Equity Indices', keys:[] }, factor: { title:'AQR Factors', keys:[] } };
+    ORDER.forEach(function(k){ groups[DATA.series[k].category].keys.push(k); });
+    Object.keys(groups).forEach(function(g){
+      var gdiv = document.createElement('div');
+      gdiv.className = 'legend-group';
+      var gt = document.createElement('div'); gt.className='gtitle'; gt.textContent = groups[g].title;
+      gdiv.appendChild(gt);
+      groups[g].keys.forEach(function(key){
+        var label = document.createElement('label');
+        label.className = 'legend-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = visible[key];
+        cb.addEventListener('change', function(){ visible[key] = cb.checked; renderAll(); });
+        var sw = document.createElement('span');
+        sw.className = 'swatch'; sw.style.background = COLORS[key];
+        label.appendChild(cb); label.appendChild(sw);
+        label.appendChild(document.createTextNode(DATA.series[key].label));
+        gdiv.appendChild(label);
+      });
+      el.appendChild(gdiv);
+    });
+  }
+
+  // ---------- chart engine (SVG line chart with hover) ----------
+  function renderLineChart(containerId, seriesList, opts){
+    opts = opts || {};
+    var container = document.getElementById(containerId);
+    container.innerHTML = '';
+    var W = container.clientWidth || 800, H = container.clientHeight || 260;
+    var padL = 46, padR = 12, padT = 10, padB = 22;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    var allPts = [];
+    seriesList.forEach(function(s){ allPts = allPts.concat(s.points); });
+    if (allPts.length === 0){ container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No series selected</div>'; return; }
+
+    var xMin = Math.min.apply(null, allPts.map(function(p){return p.d.getTime();}));
+    var xMax = Math.max.apply(null, allPts.map(function(p){return p.d.getTime();}));
+    var yVals = allPts.map(function(p){return p.v;});
+    var yMin = Math.min.apply(null, yVals), yMax = Math.max.apply(null, yVals);
+    var logScale = !!opts.log;
+    if (logScale){ yMin = Math.max(yMin, 1e-6); }
+    if (yMin === yMax){ yMin -= 1; yMax += 1; }
+    var yPad = (yMax - yMin) * 0.08;
+    var yLo = logScale ? yMin*0.9 : yMin - yPad;
+    var yHi = logScale ? yMax*1.1 : yMax + yPad;
+
+    function xPix(t){ return padL + (t - xMin) / (xMax - xMin) * plotW; }
+    function yPix(v){
+      if (logScale){
+        var lv = Math.log(Math.max(v,1e-6)), lLo = Math.log(yLo), lHi = Math.log(yHi);
+        return padT + plotH - (lv - lLo) / (lHi - lLo) * plotH;
+      }
+      return padT + plotH - (v - yLo) / (yHi - yLo) * plotH;
+    }
+
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    // gridlines + y ticks
+    var yTickCount = 4;
+    for (var i=0;i<=yTickCount;i++){
+      var val = logScale
+        ? Math.exp(Math.log(yLo) + (Math.log(yHi)-Math.log(yLo)) * i/yTickCount)
+        : yLo + (yHi-yLo) * i/yTickCount;
+      var yy = yPix(val);
+      var line = document.createElementNS(svgNS,'line');
+      line.setAttribute('x1', padL); line.setAttribute('x2', W-padR);
+      line.setAttribute('y1', yy); line.setAttribute('y2', yy);
+      line.setAttribute('class','gridline');
+      svg.appendChild(line);
+      var txt = document.createElementNS(svgNS,'text');
+      txt.setAttribute('x', 4); txt.setAttribute('y', yy+3);
+      txt.setAttribute('class','axis-label');
+      txt.textContent = opts.yFormat ? opts.yFormat(val) : val.toFixed(2);
+      svg.appendChild(txt);
+    }
+    // x ticks (years)
+    var startYear = new Date(xMin).getUTCFullYear(), endYear = new Date(xMax).getUTCFullYear();
+    var span = endYear - startYear;
+    var step = Math.max(1, Math.ceil(span / 8));
+    for (var yr = Math.ceil(startYear/step)*step; yr <= endYear; yr += step){
+      var t = Date.UTC(yr,0,1);
+      if (t < xMin || t > xMax) continue;
+      var xx = xPix(t);
+      var txt2 = document.createElementNS(svgNS,'text');
+      txt2.setAttribute('x', xx); txt2.setAttribute('y', H-4);
+      txt2.setAttribute('class','axis-label'); txt2.setAttribute('text-anchor','middle');
+      txt2.textContent = yr;
+      svg.appendChild(txt2);
+    }
+
+    // zero-line for non-log charts that cross zero
+    if (!logScale && yLo < 0 && yHi > 0){
+      var zl = document.createElementNS(svgNS,'line');
+      zl.setAttribute('x1', padL); zl.setAttribute('x2', W-padR);
+      zl.setAttribute('y1', yPix(0)); zl.setAttribute('y2', yPix(0));
+      zl.setAttribute('stroke', 'var(--muted)'); zl.setAttribute('stroke-width','1');
+      svg.appendChild(zl);
+    }
+
+    seriesList.forEach(function(s){
+      var d = s.points.map(function(p,i){ return (i===0?'M':'L') + xPix(p.d.getTime()).toFixed(1) + ',' + yPix(p.v).toFixed(2); }).join(' ');
+      var path = document.createElementNS(svgNS,'path');
+      path.setAttribute('d', d);
+      path.setAttribute('class','series-path');
+      path.setAttribute('stroke', s.color);
+      svg.appendChild(path);
+    });
+
+    // hover
+    var crosshair = document.createElementNS(svgNS,'line');
+    crosshair.setAttribute('class','crosshair'); crosshair.setAttribute('y1', padT); crosshair.setAttribute('y2', padT+plotH);
+    crosshair.style.display = 'none';
+    svg.appendChild(crosshair);
+    var dots = seriesList.map(function(s){
+      var c = document.createElementNS(svgNS,'circle');
+      c.setAttribute('r', 3); c.setAttribute('fill', s.color); c.style.display='none';
+      svg.appendChild(c);
+      return c;
+    });
+
+    container.appendChild(svg);
+    var tooltip = document.createElement('div');
+    tooltip.className = 'tooltip';
+    container.appendChild(tooltip);
+
+    function findNearestIndex(points, t){
+      var lo=0, hi=points.length-1;
+      if (t <= points[0].d.getTime()) return 0;
+      if (t >= points[hi].d.getTime()) return hi;
+      while (lo < hi){
+        var mid = (lo+hi)>>1;
+        if (points[mid].d.getTime() < t) lo = mid+1; else hi = mid;
+      }
+      return lo;
+    }
+
+    svg.addEventListener('mousemove', function(e){
+      var rect = svg.getBoundingClientRect();
+      var px = (e.clientX - rect.left) / rect.width * W;
+      if (px < padL || px > W - padR){ tooltip.style.display='none'; crosshair.style.display='none'; dots.forEach(function(d){d.style.display='none';}); return; }
+      var t = xMin + (px - padL) / plotW * (xMax - xMin);
+      var rows = [];
+      var refX = px;
+      seriesList.forEach(function(s, idx){
+        if (s.points.length === 0) return;
+        var i = findNearestIndex(s.points, t);
+        var p = s.points[i];
+        var dx = xPix(p.d.getTime());
+        dots[idx].setAttribute('cx', dx); dots[idx].setAttribute('cy', yPix(p.v));
+        dots[idx].style.display = 'block';
+        rows.push({label:s.label, color:s.color, v:p.v, d:p.d});
+        refX = dx;
+      });
+      crosshair.setAttribute('x1', refX); crosshair.setAttribute('x2', refX);
+      crosshair.style.display = 'block';
+      if (rows.length){
+        var dateLabel = fmtDate(rows[0].d);
+        var html = '<div class="tt-date">'+dateLabel+'</div>' + rows.map(function(r){
+          return '<div class="tt-row"><span class="swatch" style="background:'+r.color+'"></span>'+r.label+': <strong>'+(opts.tooltipFormat?opts.tooltipFormat(r.v):r.v.toFixed(3))+'</strong></div>';
+        }).join('');
+        tooltip.innerHTML = html;
+        tooltip.style.display = 'block';
+        var left = refX + 10, top = 8;
+        if (left + 190 > W) left = refX - 190;
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+      }
+    });
+    svg.addEventListener('mouseleave', function(){
+      tooltip.style.display='none'; crosshair.style.display='none'; dots.forEach(function(d){d.style.display='none';});
+    });
+  }
+
+  function visibleKeys(){ return ORDER.filter(function(k){ return visible[k]; }); }
+
+  // ---------- global date-range slider ----------
+  function buildGlobalMonths(){
+    var minT = Infinity, maxT = -Infinity;
+    ORDER.forEach(function(k){
+      var pts = sortedPoints(k);
+      if (pts.length){
+        minT = Math.min(minT, pts[0].d.getTime());
+        maxT = Math.max(maxT, pts[pts.length-1].d.getTime());
+      }
+    });
+    var months = [], d = new Date(minT);
+    while (d.getTime() <= maxT){
+      months.push(new Date(d.getTime()));
+      d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 1));
+    }
+    return months;
+  }
+  var GLOBAL_MONTHS = buildGlobalMonths();
+  var windowRange = { startIdx: 0, endIdx: GLOBAL_MONTHS.length - 1 };
+
+  function windowBounds(){
+    return { start: GLOBAL_MONTHS[windowRange.startIdx].getTime(), end: GLOBAL_MONTHS[windowRange.endIdx].getTime() };
+  }
+
+  function initRangeSlider(){
+    var startInput = document.getElementById('range-start');
+    var endInput = document.getElementById('range-end');
+    var maxIdx = GLOBAL_MONTHS.length - 1;
+    startInput.max = maxIdx; endInput.max = maxIdx;
+    startInput.value = windowRange.startIdx; endInput.value = windowRange.endIdx;
+
+    function updateFill(){
+      var leftPct = windowRange.startIdx / maxIdx * 100;
+      var rightPct = windowRange.endIdx / maxIdx * 100;
+      var fill = document.getElementById('range-fill');
+      fill.style.left = leftPct + '%';
+      fill.style.width = Math.max(0, rightPct - leftPct) + '%';
+      document.getElementById('range-start-label').innerHTML = 'From <strong>' + fmtDate(GLOBAL_MONTHS[windowRange.startIdx]) + '</strong>';
+      document.getElementById('range-end-label').innerHTML = 'To <strong>' + fmtDate(GLOBAL_MONTHS[windowRange.endIdx]) + '</strong>';
+    }
+    updateFill();
+
+    startInput.addEventListener('input', function(){
+      var v = Math.min(+startInput.value, windowRange.endIdx);
+      windowRange.startIdx = v; startInput.value = v;
+      updateFill(); renderAll();
+    });
+    endInput.addEventListener('input', function(){
+      var v = Math.max(+endInput.value, windowRange.startIdx);
+      windowRange.endIdx = v; endInput.value = v;
+      updateFill(); renderAll();
+    });
+  }
+
+  function renderGrowth(){
+    var keys = visibleKeys();
+    var win = windowBounds();
+    var series = keys.map(function(k){
+      var pts = cumulativeSeries(k).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+      if (pts.length === 0) return { key:k, label:DATA.series[k].label, color:COLORS[k], points: [] };
+      var base = pts[0].v;
+      var rebased = pts.map(function(p){ return { d:p.d, v: p.v/base*100 }; });
+      return { key:k, label:DATA.series[k].label, color:COLORS[k], points: rebased };
+    });
+    renderLineChart('chart-growth', series, { log:true, yFormat: function(v){ return v.toFixed(0); }, tooltipFormat: function(v){ return v.toFixed(1); } });
+  }
+
+  function renderRolling(){
+    var keys = visibleKeys();
+    var win = windowBounds();
+    var series = keys.map(function(k){
+      var pts = rollingSeries(k,12).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+      return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
+    });
+    renderLineChart('chart-rolling', series, { log:false, yFormat: function(v){ return fmtPct(v,0); }, tooltipFormat: function(v){ return fmtPct(v,1); } });
+  }
+
+  function pearson(xs, ys){
+    var n = xs.length;
+    var mx = xs.reduce(function(a,b){return a+b;},0)/n;
+    var my = ys.reduce(function(a,b){return a+b;},0)/n;
+    var num=0, dx=0, dy=0;
+    for (var i=0;i<n;i++){ num += (xs[i]-mx)*(ys[i]-my); dx += (xs[i]-mx)*(xs[i]-mx); dy += (ys[i]-my)*(ys[i]-my); }
+    return num / Math.sqrt(dx*dy);
+  }
+
+  function renderCorr(){
+    var keys = visibleKeys();
+    var el = document.getElementById('corr-table');
+    if (keys.length < 2){ el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:.85rem;">Select at least two series in the legend above.</div>'; return; }
+    var win = windowBounds();
+    var maps = {};
+    keys.forEach(function(k){
+      var m = {};
+      sortedPoints(k).forEach(function(p){ if (p.d.getTime() >= win.start && p.d.getTime() <= win.end) m[p.d.getTime()] = p.r; });
+      maps[k] = m;
+    });
+    var html = '<table><tr><th></th>' + keys.map(function(k){ return '<th style="color:'+COLORS[k]+'">'+k+'</th>'; }).join('') + '</tr>';
+    keys.forEach(function(k1){
+      html += '<tr><th style="color:'+COLORS[k1]+'">'+k1+'</th>';
+      keys.forEach(function(k2){
+        var xs=[], ys=[];
+        Object.keys(maps[k1]).forEach(function(t){
+          if (maps[k2].hasOwnProperty(t)){ xs.push(maps[k1][t]); ys.push(maps[k2][t]); }
+        });
+        var c = xs.length > 6 ? pearson(xs, ys) : NaN;
+        var bg = 'transparent';
+        if (!isNaN(c)){
+          var alpha = Math.min(Math.abs(c), 1) * 0.55;
+          bg = c >= 0 ? 'rgba(28,92,171,'+alpha+')' : 'rgba(192,54,44,'+alpha+')';
+        }
+        html += '<td style="background:'+bg+'">' + (isNaN(c) ? '–' : c.toFixed(2)) + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</table>';
+    el.innerHTML = html;
+  }
+
+  var SOURCE_INFO = {
+    SPX: { desc: "A market-cap-weighted index of roughly 500 large U.S. companies, the standard benchmark for U.S. large-cap equities.", url: "https://finance.yahoo.com/quote/%5EGSPC" },
+    EM:  { desc: "A basket of stocks from emerging-market economies such as China, India, and Brazil, tracked here via a liquid ETF proxy.", url: "https://finance.yahoo.com/quote/EEM" },
+    EAFE:{ desc: "A basket of developed-market stocks outside the U.S. and Canada, such as Japan, the UK, and France, tracked here via a liquid ETF proxy.", url: "https://finance.yahoo.com/quote/EFA" },
+    MOM: { desc: "A long-only index of U.S. large-cap stocks with strong recent price momentum.", url: "https://www.aqr.com/Insights/Datasets/Momentum-Indices-Monthly" },
+    VAL: { desc: "A long/short portfolio that buys cheap (high book-to-market) U.S. stocks and shorts expensive ones, isolating the value premium.", url: "https://www.aqr.com/Insights/Datasets/The-Devil-in-HMLs-Details-Factors-Monthly" },
+    BAB: { desc: "A long/short portfolio that buys low-beta stocks and shorts high-beta stocks, isolating the return to low-risk investing.", url: "https://www.aqr.com/Insights/Datasets/Betting-Against-Beta-Equity-Factors-Monthly" },
+    QMJ: { desc: "A long/short portfolio that buys high-quality (profitable, growing, safe) stocks and shorts low-quality ones.", url: "https://www.aqr.com/Insights/Datasets/Quality-Minus-Junk-Factors-Monthly" }
+  };
+
+  function renderSources(){
+    var el = document.getElementById('sources-list');
+    el.innerHTML = ORDER.map(function(k){
+      var s = DATA.series[k];
+      var info = SOURCE_INFO[k];
+      return '<li><strong>'+s.label+':</strong> '+info.desc+' <a href="'+info.url+'" target="_blank" rel="noopener">'+s.source+'</a></li>';
+    }).join('');
+  }
+
+  function renderAll(){
+    var win = windowBounds();
+    renderTiles(win.start, win.end);
+    renderLegend();
+    var active = document.querySelector('.tab.active').getAttribute('data-tab');
+    if (active === 'growth') renderGrowth();
+    else if (active === 'rolling') renderRolling();
+    else renderCorr();
+  }
+
+  document.getElementById('tabs').addEventListener('click', function(e){
+    var btn = e.target.closest('.tab');
+    if (!btn) return;
+    document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+    btn.classList.add('active');
+    ['growth','rolling','corr'].forEach(function(name){
+      document.getElementById('panel-'+name).classList.toggle('hidden', name !== btn.getAttribute('data-tab'));
+    });
+    renderAll();
+  });
+
+  document.getElementById('asof').textContent = 'Data refreshed ' + new Date(DATA.generated).toLocaleDateString('en-US',{month:'long', day:'numeric', year:'numeric'}) + '.';
+  renderSources();
+  initRangeSlider();
+  applyTheme(localStorage.getItem('eq-dash-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  window.addEventListener('resize', renderAll);
+})();
+</script>
+</body>
+</html>
