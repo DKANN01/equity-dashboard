@@ -165,7 +165,7 @@
   <section class="panel hidden" id="panel-pattern">
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">The dashed line is a single reference normal distribution (same mean and standard deviation as the pooled monthly returns of all seven series over the selected date range) and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+    <p class="cap">The dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all seven series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -669,11 +669,12 @@
       return;
     }
 
-    // Single reference normal curve, pooled across every series' monthly returns, shown
+    // Single reference normal curve, centered at 0% (not fit to the data's mean) with a
+    // standard deviation taken from the pooled monthly returns of all seven series, shown
     // at all times regardless of which (if any) series are checked.
     var pooled = [];
     allStats.forEach(function(s){ pooled = pooled.concat(s.rets); });
-    var pooledMean = pooled.reduce(function(a,b){return a+b;},0) / pooled.length;
+    var pooledMean = 0;
     var pooledSd = stdev(pooled);
 
     var barStats = allStats.filter(function(s){ return visible.indexOf(s.key) !== -1; });
