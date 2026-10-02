@@ -661,8 +661,14 @@
       return;
     }
 
+    // Fix the x-axis domain from ALL series (not just the ones currently toggled on) so the
+    // axis doesn't jump around as series are shown/hidden in the legend.
     var allRets = [];
-    seriesData.forEach(function(s){ allRets = allRets.concat(s.rets); });
+    ORDER.forEach(function(k){
+      effectivePoints(k)
+        .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+        .forEach(function(p){ allRets.push(p.r); });
+    });
     var rMin = Math.min.apply(null, allRets), rMax = Math.max.apply(null, allRets);
     var pad = (rMax - rMin) * 0.08 || 0.01;
     rMin -= pad; rMax += pad;
