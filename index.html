@@ -165,7 +165,7 @@
   <section class="panel hidden" id="panel-pattern">
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">The dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all seven series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+    <p class="cap">The white dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all seven series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns plus its own fitted normal curve (same color, dashed) — where either departs from the white reference curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -692,7 +692,9 @@
         counts[idx]++;
       });
       s.density = counts.map(function(c){ return c / (s.rets.length * binWidth); });
-      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density));
+      s.mean = s.rets.reduce(function(a,b){return a+b;},0) / s.rets.length;
+      s.sd = stdev(s.rets);
+      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density), normalPdf(s.mean, s.mean, s.sd));
     });
     maxDensity = maxDensity * 1.1 || 1;
 
@@ -748,6 +750,22 @@
     curvePath.setAttribute('stroke-width','1.6');
     curvePath.setAttribute('stroke-dasharray','4,3');
     svg.appendChild(curvePath);
+
+    // Per-series fitted normal curve, only drawn for series currently checked in the legend.
+    barStats.forEach(function(s){
+      var d = '';
+      for (var i3=0;i3<=steps;i3++){
+        var rv3 = rMin + (rMax - rMin) * i3 / steps;
+        d += (i3===0?'M':'L') + xPix(rv3).toFixed(1) + ',' + yPix(normalPdf(rv3, s.mean, s.sd)).toFixed(2) + ' ';
+      }
+      var path = document.createElementNS(svgNS,'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill','none');
+      path.setAttribute('stroke', s.color);
+      path.setAttribute('stroke-width','1.6');
+      path.setAttribute('stroke-dasharray','4,3');
+      svg.appendChild(path);
+    });
 
     container.appendChild(svg);
   }
