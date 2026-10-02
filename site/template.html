@@ -165,7 +165,7 @@
   <section class="panel hidden" id="panel-pattern">
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">Histogram of monthly returns for each selected series over the selected date range, with a dashed normal-distribution curve of the same mean and standard deviation overlaid. Where the bars depart from the dashed curve — fatter tails, skew — real returns are departing from the normal-distribution assumption used in most risk models.<span id="note-pattern"></span></p>
+    <p class="cap">Dashed curves show each series' theoretical normal distribution (same mean and standard deviation as its actual monthly returns over the selected date range) and are always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -645,53 +645,49 @@
   }
 
   function renderPattern(){
-    var keys = visibleKeys();
+    var visible = visibleKeys();
     var container = document.getElementById('chart-pattern');
     container.innerHTML = '';
     var win = windowBounds();
-    var seriesData = keys.map(function(k){
+
+    // Fixed x-axis domain so it never shifts as series are toggled or the window changes.
+    var rMin = -0.30, rMax = 0.30;
+    var binCount = 30;
+    var binWidth = (rMax - rMin) / binCount;
+
+    // Normal-distribution curves are always drawn for every series; histogram bars are
+    // only drawn for series currently checked in the legend.
+    var allStats = ORDER.map(function(k){
       var rets = effectivePoints(k)
         .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
         .map(function(p){ return p.r; });
-      return { key:k, label: DATA.series[k].label, color: COLORS[k], rets: rets };
-    }).filter(function(s){ return s.rets.length > 4; });
+      if (rets.length < 5) return null;
+      var mean = rets.reduce(function(a,b){return a+b;},0) / rets.length;
+      return { key:k, color: COLORS[k], rets: rets, mean: mean, sd: stdev(rets) };
+    }).filter(Boolean);
 
-    if (seriesData.length === 0){
-      container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No series selected</div>';
+    if (allStats.length === 0){
+      container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No data in this window</div>';
       return;
     }
 
-    // Fix the x-axis domain from ALL series (not just the ones currently toggled on) so the
-    // axis doesn't jump around as series are shown/hidden in the legend.
-    var allRets = [];
-    ORDER.forEach(function(k){
-      effectivePoints(k)
-        .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
-        .forEach(function(p){ allRets.push(p.r); });
-    });
-    var rMin = Math.min.apply(null, allRets), rMax = Math.max.apply(null, allRets);
-    var pad = (rMax - rMin) * 0.08 || 0.01;
-    rMin -= pad; rMax += pad;
-
-    var binCount = 28;
-    var binWidth = (rMax - rMin) / binCount;
+    var barStats = allStats.filter(function(s){ return visible.indexOf(s.key) !== -1; });
 
     var W = container.clientWidth || 800, H = container.clientHeight || 320;
     var padL = 46, padR = 12, padT = 10, padB = 22;
     var plotW = W - padL - padR, plotH = H - padT - padB;
 
     var maxDensity = 0;
-    seriesData.forEach(function(s){
-      var mean = s.rets.reduce(function(a,b){return a+b;},0) / s.rets.length;
-      var sd = stdev(s.rets);
-      s.mean = mean; s.sd = sd;
+    allStats.forEach(function(s){ maxDensity = Math.max(maxDensity, normalPdf(s.mean, s.mean, s.sd)); });
+    barStats.forEach(function(s){
       var counts = new Array(binCount).fill(0);
       s.rets.forEach(function(r){
-        var idx = Math.min(binCount - 1, Math.max(0, Math.floor((r - rMin) / binWidth)));
+        var clamped = Math.min(rMax, Math.max(rMin, r));
+        var idx = Math.min(binCount - 1, Math.max(0, Math.floor((clamped - rMin) / binWidth)));
         counts[idx]++;
       });
       s.density = counts.map(function(c){ return c / (s.rets.length * binWidth); });
-      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density), normalPdf(mean, mean, sd));
+      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density));
     });
     maxDensity = maxDensity * 1.1 || 1;
 
@@ -720,7 +716,7 @@
       svg.appendChild(zl);
     }
 
-    seriesData.forEach(function(s){
+    barStats.forEach(function(s){
       for (var b=0; b<binCount; b++){
         var x0 = xPix(rMin + b*binWidth), x1 = xPix(rMin + (b+1)*binWidth);
         var yTop = yPix(s.density[b]), yBase = yPix(0);
@@ -733,6 +729,9 @@
         rect.setAttribute('opacity', '0.28');
         svg.appendChild(rect);
       }
+    });
+
+    allStats.forEach(function(s){
       var steps = 80, d = '';
       for (var i2=0;i2<=steps;i2++){
         var rv2 = rMin + (rMax - rMin) * i2 / steps;
