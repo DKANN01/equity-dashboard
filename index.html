@@ -67,6 +67,9 @@
   .range-labels strong{color:var(--ink);}
   .excess-toggle{display:flex; align-items:flex-start; gap:7px; font-size:.78rem; color:var(--muted); margin:0 0 18px; cursor:pointer;}
   .excess-toggle input{margin-top:2px; accent-color:var(--accent); cursor:pointer;}
+  .window-slider{display:flex; align-items:center; gap:10px; margin:0 0 16px; font-size:.78rem; color:var(--muted);}
+  .window-slider input[type=range]{flex:1; accent-color:var(--accent); cursor:pointer;}
+  .window-slider strong{color:var(--ink);}
   .chart{width:100%; height:260px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:relative;}
   .chart svg{width:100%; height:100%; display:block; overflow:visible;}
   .axis-label{font-size:9px; fill:var(--muted);}
@@ -127,29 +130,47 @@
 
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="growth" type="button">Cumulative Growth</button>
-    <button class="tab" data-tab="rolling" type="button">Rolling 12-Month Return</button>
+    <button class="tab" data-tab="rolling" type="button">Rolling Returns and Volatility</button>
     <button class="tab" data-tab="corr" type="button">Correlation</button>
+    <button class="tab" data-tab="pattern" type="button">Return Pattern</button>
   </nav>
 
   <section class="legend" id="legend"></section>
 
   <section class="panel" id="panel-growth">
     <div class="chart" id="chart-growth"></div>
-    <p class="cap">Growth of 100 compounding each series' own monthly return, rebased to 100 at the start of the selected date range (log scale). Value, BAB, and QMJ compound a long/short self-financing excess return and are not directly investable in this form — they illustrate the premium's behavior over time, not a tradable product.<span id="note-growth"></span></p>
+    <p class="cap">Growth of 100 compounding each series' own monthly return, rebased to 100 at the start of the selected date range (log scale). By default, Value, BAB, and QMJ show a fully collateralized total return (their long/short spread plus the T-bill rate); switch on excess returns to see the pure long/short premium instead.<span id="note-growth"></span></p>
   </section>
 
   <section class="panel hidden" id="panel-rolling">
+    <div class="window-slider">
+      <span>Rolling window:</span>
+      <input type="range" id="roll-window" min="1" max="60" value="12">
+      <span><strong class="roll-window-val">12</strong> months</span>
+    </div>
+    <h2>Rolling <span class="roll-window-val">12</span>-month return</h2>
     <div class="chart" id="chart-rolling"></div>
-    <p class="cap">Trailing 12-month compounded return, recalculated each month, over the selected date range. Wide dispersion between lines in the same month shows how differently these exposures behaved over the same period.<span id="note-rolling"></span></p>
-    <h2>Rolling 12-month volatility</h2>
+    <p class="cap">Trailing <span class="roll-window-val">12</span>-month compounded return, recalculated each month, over the selected date range. Wide dispersion between lines in the same month shows how differently these exposures behaved over the same period.<span id="note-rolling"></span></p>
+    <h2>Rolling <span class="roll-window-val">12</span>-month volatility</h2>
     <div class="chart" id="chart-rolling-vol"></div>
-    <p class="cap">Annualized standard deviation of monthly returns over the trailing 12 months, recalculated each month. Rising lines mark periods of elevated risk; compare against the return chart above to see how return and risk moved together.<span id="note-rolling-vol"></span></p>
+    <p class="cap">Annualized standard deviation of monthly returns over the trailing <span class="roll-window-val">12</span> months, recalculated each month. Try shortening the window above: returns swing wildly while volatility stays comparatively stable — a reminder that risk is far more predictable than return.<span id="note-rolling-vol"></span></p>
   </section>
 
   <section class="panel hidden" id="panel-corr">
+    <div class="window-slider">
+      <span>Correlation window:</span>
+      <input type="range" id="corr-window" min="6" max="600" value="600">
+      <span id="corr-window-label"><strong>Full range</strong></span>
+    </div>
     <h2>Pairwise correlation of monthly returns</h2>
     <div id="corr-table"></div>
-    <p class="cap">Computed over each pair's overlapping monthly history within the selected date range. Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.<span id="note-corr"></span></p>
+    <p class="cap">Computed over each pair's overlapping monthly history within the selected window. Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.<span id="note-corr"></span></p>
+  </section>
+
+  <section class="panel hidden" id="panel-pattern">
+    <h2>Distribution of monthly returns</h2>
+    <div class="chart" id="chart-pattern" style="height:320px;"></div>
+    <p class="cap">Histogram of monthly returns for each selected series over the selected date range, with a dashed normal-distribution curve of the same mean and standard deviation overlaid. Where the bars depart from the dashed curve — fatter tails, skew — real returns are departing from the normal-distribution assumption used in most risk models.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -210,10 +231,16 @@
   Object.keys(DATA.riskfree.data).forEach(function(mk){ RF_MAP[monthKeyToDate(mk).getTime()] = DATA.riskfree.data[mk]; });
   function effectivePoints(key){
     var pts = sortedPoints(key);
-    if (!excessMode || DATA.series[key].is_excess) return pts;
+    var isSpread = DATA.series[key].is_excess; // true only for VAL, BAB, QMJ (long/short self-financing)
     return pts.map(function(p){
       var rf = RF_MAP[p.d.getTime()];
-      return { d: p.d, r: (rf == null ? p.r : p.r - rf) };
+      if (rf == null) return p;
+      if (excessMode){
+        // Excess-return basis for everyone: subtract RF from total-return series, leave spreads as-is.
+        return isSpread ? p : { d: p.d, r: p.r - rf };
+      }
+      // Total-return basis for everyone (default): add RF to spreads, leave total-return series as-is.
+      return isSpread ? { d: p.d, r: p.r + rf } : p;
     });
   }
   function cumulativeSeries(key){
@@ -258,6 +285,7 @@
     pts.forEach(function(p){ nav *= (1+p.r); cum.push({d:p.d, v:nav}); });
     var years = Math.max((cum[cum.length-1].d - cum[0].d) / (365.25*24*3600*1000), 1/12);
     var cagr = Math.pow(nav, 1/years) - 1;
+    var cc = Math.log(nav) / years;
     var sd = stdev(rets);
     var vol = sd * Math.sqrt(12);
     var mean = rets.reduce(function(a,b){return a+b;},0) / rets.length;
@@ -265,7 +293,7 @@
     var tstat = sd > 0 ? mean / (sd / Math.sqrt(rets.length)) : 0;
     var peak = -Infinity, maxDd = 0;
     cum.forEach(function(p){ peak = Math.max(peak, p.v); maxDd = Math.min(maxDd, p.v/peak - 1); });
-    return { cagr: cagr, vol: vol, maxDd: maxDd, sharpe: sharpe, tstat: tstat, start: pts[0].d, end: pts[pts.length-1].d };
+    return { cagr: cagr, cc: cc, vol: vol, maxDd: maxDd, sharpe: sharpe, tstat: tstat, start: pts[0].d, end: pts[pts.length-1].d };
   }
 
   // ---------- tiles ----------
@@ -285,7 +313,8 @@
         div.innerHTML =
           '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
           '<div class="v">'+fmtPct(s.cagr)+' <span style="font-size:.65rem;color:var(--muted);font-weight:400;">CAGR</span></div>' +
-          '<div class="sub">Vol '+fmtPct(s.vol)+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
+          '<div class="sub">'+fmtPct(s.cc)+' cont. compounded &middot; Vol '+fmtPct(s.vol)+'</div>' +
+          '<div class="sub">Max DD '+fmtPct(s.maxDd)+'</div>' +
           (excessMode ? '<div class="sub">Sharpe '+s.sharpe.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
           '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
       }
@@ -542,17 +571,32 @@
     renderLineChart('chart-growth', series, { log:true, yFormat: function(v){ return v.toFixed(0); }, tooltipFormat: function(v){ return v.toFixed(1); } });
   }
 
+  var rollWindow = 12;
+  function updateRollLabels(){
+    document.querySelectorAll('.roll-window-val').forEach(function(el){ el.textContent = rollWindow; });
+  }
+  function initRollSlider(){
+    var input = document.getElementById('roll-window');
+    input.value = rollWindow;
+    updateRollLabels();
+    input.addEventListener('input', function(){
+      rollWindow = +input.value;
+      updateRollLabels();
+      renderAll();
+    });
+  }
+
   function renderRolling(){
     var keys = visibleKeys();
     var win = windowBounds();
     var series = keys.map(function(k){
-      var pts = rollingSeries(k,12).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+      var pts = rollingSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
       return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
     });
     renderLineChart('chart-rolling', series, { log:false, yFormat: function(v){ return fmtPct(v,0); }, tooltipFormat: function(v){ return fmtPct(v,1); } });
 
     var volSeries = keys.map(function(k){
-      var pts = rollingVolSeries(k,12).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+      var pts = rollingVolSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
       return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
     });
     renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: function(v){ return fmtPct(v,0); }, tooltipFormat: function(v){ return fmtPct(v,1); } });
@@ -567,15 +611,43 @@
     return num / Math.sqrt(dx*dy);
   }
 
+  var corrWindow = null; // null = use the full selected date range
+  function initCorrSlider(){
+    var input = document.getElementById('corr-window');
+    var label = document.getElementById('corr-window-label');
+    function updateLabel(){
+      label.innerHTML = corrWindow === null ? '<strong>Full range</strong>' : '<strong>' + corrWindow + '</strong> months';
+    }
+    function refreshMax(){
+      var maxLen = GLOBAL_MONTHS.length;
+      input.min = 6;
+      input.max = maxLen;
+      input.value = corrWindow === null ? maxLen : corrWindow;
+    }
+    refreshMax();
+    updateLabel();
+    input.addEventListener('input', function(){
+      var v = +input.value;
+      corrWindow = (v >= GLOBAL_MONTHS.length) ? null : v;
+      updateLabel();
+      renderAll();
+    });
+  }
+
   function renderCorr(){
     var keys = visibleKeys();
     var el = document.getElementById('corr-table');
     if (keys.length < 2){ el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:.85rem;">Select at least two series in the legend above.</div>'; return; }
     var win = windowBounds();
+    var startIdx = windowRange.startIdx;
+    if (corrWindow !== null){
+      startIdx = Math.max(windowRange.startIdx, windowRange.endIdx - corrWindow + 1);
+    }
+    var start = GLOBAL_MONTHS[startIdx].getTime();
     var maps = {};
     keys.forEach(function(k){
       var m = {};
-      effectivePoints(k).forEach(function(p){ if (p.d.getTime() >= win.start && p.d.getTime() <= win.end) m[p.d.getTime()] = p.r; });
+      effectivePoints(k).forEach(function(p){ if (p.d.getTime() >= start && p.d.getTime() <= win.end) m[p.d.getTime()] = p.r; });
       maps[k] = m;
     });
     var html = '<table><tr><th></th>' + keys.map(function(k){ return '<th style="color:'+COLORS[k]+'">'+k+'</th>'; }).join('') + '</tr>';
@@ -600,6 +672,111 @@
     el.innerHTML = html;
   }
 
+  function normalPdf(x, mean, sd){
+    if (sd <= 0) return 0;
+    return Math.exp(-0.5 * Math.pow((x - mean) / sd, 2)) / (sd * Math.sqrt(2 * Math.PI));
+  }
+
+  function renderPattern(){
+    var keys = visibleKeys();
+    var container = document.getElementById('chart-pattern');
+    container.innerHTML = '';
+    var win = windowBounds();
+    var seriesData = keys.map(function(k){
+      var rets = effectivePoints(k)
+        .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+        .map(function(p){ return p.r; });
+      return { key:k, label: DATA.series[k].label, color: COLORS[k], rets: rets };
+    }).filter(function(s){ return s.rets.length > 4; });
+
+    if (seriesData.length === 0){
+      container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No series selected</div>';
+      return;
+    }
+
+    var allRets = [];
+    seriesData.forEach(function(s){ allRets = allRets.concat(s.rets); });
+    var rMin = Math.min.apply(null, allRets), rMax = Math.max.apply(null, allRets);
+    var pad = (rMax - rMin) * 0.08 || 0.01;
+    rMin -= pad; rMax += pad;
+
+    var binCount = 28;
+    var binWidth = (rMax - rMin) / binCount;
+
+    var W = container.clientWidth || 800, H = container.clientHeight || 320;
+    var padL = 46, padR = 12, padT = 10, padB = 22;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    var maxDensity = 0;
+    seriesData.forEach(function(s){
+      var mean = s.rets.reduce(function(a,b){return a+b;},0) / s.rets.length;
+      var sd = stdev(s.rets);
+      s.mean = mean; s.sd = sd;
+      var counts = new Array(binCount).fill(0);
+      s.rets.forEach(function(r){
+        var idx = Math.min(binCount - 1, Math.max(0, Math.floor((r - rMin) / binWidth)));
+        counts[idx]++;
+      });
+      s.density = counts.map(function(c){ return c / (s.rets.length * binWidth); });
+      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density), normalPdf(mean, mean, sd));
+    });
+    maxDensity = maxDensity * 1.1 || 1;
+
+    function xPix(r){ return padL + (r - rMin) / (rMax - rMin) * plotW; }
+    function yPix(d){ return padT + plotH - (d / maxDensity) * plotH; }
+
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    var xTickCount = 6;
+    for (var i=0;i<=xTickCount;i++){
+      var rv = rMin + (rMax - rMin) * i / xTickCount;
+      var xx = xPix(rv);
+      var txt = document.createElementNS(svgNS,'text');
+      txt.setAttribute('x', xx); txt.setAttribute('y', H-4);
+      txt.setAttribute('class','axis-label'); txt.setAttribute('text-anchor','middle');
+      txt.textContent = fmtPct(rv, 0);
+      svg.appendChild(txt);
+    }
+    if (rMin < 0 && rMax > 0){
+      var zl = document.createElementNS(svgNS,'line');
+      zl.setAttribute('x1', xPix(0)); zl.setAttribute('x2', xPix(0));
+      zl.setAttribute('y1', padT); zl.setAttribute('y2', padT + plotH);
+      zl.setAttribute('stroke', 'var(--muted)'); zl.setAttribute('stroke-width','1');
+      svg.appendChild(zl);
+    }
+
+    seriesData.forEach(function(s){
+      for (var b=0; b<binCount; b++){
+        var x0 = xPix(rMin + b*binWidth), x1 = xPix(rMin + (b+1)*binWidth);
+        var yTop = yPix(s.density[b]), yBase = yPix(0);
+        var rect = document.createElementNS(svgNS,'rect');
+        rect.setAttribute('x', Math.min(x0, x1));
+        rect.setAttribute('width', Math.max(1, Math.abs(x1 - x0) - 1));
+        rect.setAttribute('y', yTop);
+        rect.setAttribute('height', Math.max(0, yBase - yTop));
+        rect.setAttribute('fill', s.color);
+        rect.setAttribute('opacity', '0.28');
+        svg.appendChild(rect);
+      }
+      var steps = 80, d = '';
+      for (var i2=0;i2<=steps;i2++){
+        var rv2 = rMin + (rMax - rMin) * i2 / steps;
+        d += (i2===0?'M':'L') + xPix(rv2).toFixed(1) + ',' + yPix(normalPdf(rv2, s.mean, s.sd)).toFixed(2) + ' ';
+      }
+      var path = document.createElementNS(svgNS,'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill','none');
+      path.setAttribute('stroke', s.color);
+      path.setAttribute('stroke-width','1.6');
+      path.setAttribute('stroke-dasharray','4,3');
+      svg.appendChild(path);
+    });
+
+    container.appendChild(svg);
+  }
+
   var SOURCE_INFO = {
     SPX: { desc: "The CRSP value-weighted total return on all NYSE/AMEX/Nasdaq common stocks, a broad U.S. market benchmark including dividends.", url: "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" },
     EM:  { desc: "A basket of stocks from emerging-market economies such as China, India, and Brazil, tracked here via a liquid ETF proxy.", url: "https://finance.yahoo.com/quote/EEM" },
@@ -617,23 +794,30 @@
       var info = SOURCE_INFO[k];
       return '<li><strong>'+s.label+':</strong> '+info.desc+' <a href="'+info.url+'" target="_blank" rel="noopener">'+s.source+'</a></li>';
     });
-    items.push('<li><strong>'+DATA.riskfree.label+':</strong> The return on a virtually riskless short-term investment; subtracted from the index and Momentum returns above when "Show excess returns" is checked, so every series is on the same excess-return basis. <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" target="_blank" rel="noopener">Kenneth French Data Library</a></li>');
+    items.push('<li><strong>'+DATA.riskfree.label+':</strong> The return on a virtually riskless short-term investment. By default it is added to Value, BAB, and QMJ\u2019s long/short spread so every series sits on the same total-return basis; the excess-returns toggle instead subtracts it from the indices and Momentum, putting every series on an excess-return basis. <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" target="_blank" rel="noopener">Kenneth French Data Library</a></li>');
     el.innerHTML = items.join('');
+  }
+
+  function basisNote(){
+    return excessMode
+      ? ' Shown as excess returns above the 1-month T-bill rate for every series \u2014 Value, BAB, and QMJ in their pure long/short form, and the indices and Momentum net of the risk-free rate.'
+      : ' Shown as total returns for every series \u2014 Value, BAB, and QMJ include the 1-month T-bill rate on top of their long/short spread (a fully collateralized return), matching the basis of the indices and Momentum.';
   }
 
   function renderAll(){
     var win = windowBounds();
     renderTiles(win.start, win.end);
     renderLegend();
-    var note = excessMode ? ' Shown net of the 1-month T-bill rate for indices and Momentum; Value, BAB, and QMJ are unchanged (already long/short excess returns).' : '';
-    ['note-growth','note-rolling','note-rolling-vol','note-corr'].forEach(function(id){
+    var note = basisNote();
+    ['note-growth','note-rolling','note-rolling-vol','note-corr','note-pattern'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.textContent = note;
     });
     var active = document.querySelector('.tab.active').getAttribute('data-tab');
     if (active === 'growth') renderGrowth();
     else if (active === 'rolling') renderRolling();
-    else renderCorr();
+    else if (active === 'corr') renderCorr();
+    else renderPattern();
   }
 
   document.getElementById('tabs').addEventListener('click', function(e){
@@ -641,7 +825,7 @@
     if (!btn) return;
     document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
     btn.classList.add('active');
-    ['growth','rolling','corr'].forEach(function(name){
+    ['growth','rolling','corr','pattern'].forEach(function(name){
       document.getElementById('panel-'+name).classList.toggle('hidden', name !== btn.getAttribute('data-tab'));
     });
     renderAll();
@@ -650,6 +834,8 @@
   document.getElementById('asof').textContent = 'Data refreshed ' + new Date(DATA.generated).toLocaleDateString('en-US',{month:'long', day:'numeric', year:'numeric'}) + '.';
   renderSources();
   initRangeSlider();
+  initRollSlider();
+  initCorrSlider();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
     renderAll();
