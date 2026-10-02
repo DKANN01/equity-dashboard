@@ -157,14 +157,9 @@
   </section>
 
   <section class="panel hidden" id="panel-corr">
-    <div class="window-slider">
-      <span>Correlation window:</span>
-      <input type="range" id="corr-window" min="6" max="600" value="600">
-      <span id="corr-window-label"><strong>Full range</strong></span>
-    </div>
     <h2>Pairwise correlation of monthly returns</h2>
     <div id="corr-table"></div>
-    <p class="cap">Computed over each pair's overlapping monthly history within the selected window. Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.<span id="note-corr"></span></p>
+    <p class="cap">Computed over each pair's overlapping monthly history within the selected date range. Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.<span id="note-corr"></span></p>
   </section>
 
   <section class="panel hidden" id="panel-pattern">
@@ -312,9 +307,9 @@
       } else {
         div.innerHTML =
           '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
-          '<div class="v">'+fmtPct(s.cagr)+' <span style="font-size:.65rem;color:var(--muted);font-weight:400;">CAGR</span></div>' +
-          '<div class="sub">'+fmtPct(s.cc)+' cont. compounded &middot; Vol '+fmtPct(s.vol)+'</div>' +
-          '<div class="sub">Max DD '+fmtPct(s.maxDd)+'</div>' +
+          '<div class="v">'+fmtPct(s.cc)+' / '+fmtPct(s.cagr)+'</div>' +
+          '<div class="sub" style="margin-top:-4px;">cont. compounded / CAGR</div>' +
+          '<div class="sub">Vol '+fmtPct(s.vol)+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
           (excessMode ? '<div class="sub">Sharpe '+s.sharpe.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
           '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
       }
@@ -611,43 +606,15 @@
     return num / Math.sqrt(dx*dy);
   }
 
-  var corrWindow = null; // null = use the full selected date range
-  function initCorrSlider(){
-    var input = document.getElementById('corr-window');
-    var label = document.getElementById('corr-window-label');
-    function updateLabel(){
-      label.innerHTML = corrWindow === null ? '<strong>Full range</strong>' : '<strong>' + corrWindow + '</strong> months';
-    }
-    function refreshMax(){
-      var maxLen = GLOBAL_MONTHS.length;
-      input.min = 6;
-      input.max = maxLen;
-      input.value = corrWindow === null ? maxLen : corrWindow;
-    }
-    refreshMax();
-    updateLabel();
-    input.addEventListener('input', function(){
-      var v = +input.value;
-      corrWindow = (v >= GLOBAL_MONTHS.length) ? null : v;
-      updateLabel();
-      renderAll();
-    });
-  }
-
   function renderCorr(){
     var keys = visibleKeys();
     var el = document.getElementById('corr-table');
     if (keys.length < 2){ el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:.85rem;">Select at least two series in the legend above.</div>'; return; }
     var win = windowBounds();
-    var startIdx = windowRange.startIdx;
-    if (corrWindow !== null){
-      startIdx = Math.max(windowRange.startIdx, windowRange.endIdx - corrWindow + 1);
-    }
-    var start = GLOBAL_MONTHS[startIdx].getTime();
     var maps = {};
     keys.forEach(function(k){
       var m = {};
-      effectivePoints(k).forEach(function(p){ if (p.d.getTime() >= start && p.d.getTime() <= win.end) m[p.d.getTime()] = p.r; });
+      effectivePoints(k).forEach(function(p){ if (p.d.getTime() >= win.start && p.d.getTime() <= win.end) m[p.d.getTime()] = p.r; });
       maps[k] = m;
     });
     var html = '<table><tr><th></th>' + keys.map(function(k){ return '<th style="color:'+COLORS[k]+'">'+k+'</th>'; }).join('') + '</tr>';
@@ -835,7 +802,6 @@
   renderSources();
   initRangeSlider();
   initRollSlider();
-  initCorrSlider();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
     renderAll();
