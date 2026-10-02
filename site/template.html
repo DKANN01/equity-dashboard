@@ -165,7 +165,7 @@
   <section class="panel hidden" id="panel-pattern">
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">Dashed curves show each series' theoretical normal distribution (same mean and standard deviation as its actual monthly returns over the selected date range) and are always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+    <p class="cap">The dashed line is a single reference normal distribution (same mean and standard deviation as the pooled monthly returns of all seven series over the selected date range) and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns on top — where the bars depart from the dashed curve (fatter tails, skew), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -655,15 +655,13 @@
     var binCount = 30;
     var binWidth = (rMax - rMin) / binCount;
 
-    // Normal-distribution curves are always drawn for every series; histogram bars are
-    // only drawn for series currently checked in the legend.
+    // Histogram bars are drawn per series currently checked in the legend.
     var allStats = ORDER.map(function(k){
       var rets = effectivePoints(k)
         .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
         .map(function(p){ return p.r; });
       if (rets.length < 5) return null;
-      var mean = rets.reduce(function(a,b){return a+b;},0) / rets.length;
-      return { key:k, color: COLORS[k], rets: rets, mean: mean, sd: stdev(rets) };
+      return { key:k, color: COLORS[k], rets: rets };
     }).filter(Boolean);
 
     if (allStats.length === 0){
@@ -671,14 +669,20 @@
       return;
     }
 
+    // Single reference normal curve, pooled across every series' monthly returns, shown
+    // at all times regardless of which (if any) series are checked.
+    var pooled = [];
+    allStats.forEach(function(s){ pooled = pooled.concat(s.rets); });
+    var pooledMean = pooled.reduce(function(a,b){return a+b;},0) / pooled.length;
+    var pooledSd = stdev(pooled);
+
     var barStats = allStats.filter(function(s){ return visible.indexOf(s.key) !== -1; });
 
     var W = container.clientWidth || 800, H = container.clientHeight || 320;
     var padL = 46, padR = 12, padT = 10, padB = 22;
     var plotW = W - padL - padR, plotH = H - padT - padB;
 
-    var maxDensity = 0;
-    allStats.forEach(function(s){ maxDensity = Math.max(maxDensity, normalPdf(s.mean, s.mean, s.sd)); });
+    var maxDensity = normalPdf(pooledMean, pooledMean, pooledSd);
     barStats.forEach(function(s){
       var counts = new Array(binCount).fill(0);
       s.rets.forEach(function(r){
@@ -731,20 +735,18 @@
       }
     });
 
-    allStats.forEach(function(s){
-      var steps = 80, d = '';
-      for (var i2=0;i2<=steps;i2++){
-        var rv2 = rMin + (rMax - rMin) * i2 / steps;
-        d += (i2===0?'M':'L') + xPix(rv2).toFixed(1) + ',' + yPix(normalPdf(rv2, s.mean, s.sd)).toFixed(2) + ' ';
-      }
-      var path = document.createElementNS(svgNS,'path');
-      path.setAttribute('d', d);
-      path.setAttribute('fill','none');
-      path.setAttribute('stroke', s.color);
-      path.setAttribute('stroke-width','1.6');
-      path.setAttribute('stroke-dasharray','4,3');
-      svg.appendChild(path);
-    });
+    var steps = 80, curveD = '';
+    for (var i2=0;i2<=steps;i2++){
+      var rv2 = rMin + (rMax - rMin) * i2 / steps;
+      curveD += (i2===0?'M':'L') + xPix(rv2).toFixed(1) + ',' + yPix(normalPdf(rv2, pooledMean, pooledSd)).toFixed(2) + ' ';
+    }
+    var curvePath = document.createElementNS(svgNS,'path');
+    curvePath.setAttribute('d', curveD);
+    curvePath.setAttribute('fill','none');
+    curvePath.setAttribute('stroke', 'var(--ink)');
+    curvePath.setAttribute('stroke-width','1.6');
+    curvePath.setAttribute('stroke-dasharray','4,3');
+    svg.appendChild(curvePath);
 
     container.appendChild(svg);
   }
