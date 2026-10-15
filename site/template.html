@@ -243,13 +243,14 @@
   var focusSeries = 'SPX';
   var RF_MAP = {};
   Object.keys(DATA.riskfree.data).forEach(function(mk){ RF_MAP[monthKeyToDate(mk).getTime()] = DATA.riskfree.data[mk]; });
-  function effectivePoints(key){
+  function effectivePoints(key){ return basisPoints(key, excessMode); }
+  function basisPoints(key, excess){
     var pts = sortedPoints(key);
     var isSpread = DATA.series[key].is_excess; // true only for VAL, BAB, QMJ (long/short self-financing)
     return pts.map(function(p){
       var rf = RF_MAP[p.d.getTime()];
       if (rf == null) return p;
-      if (excessMode){
+      if (excess){
         // Excess-return basis for everyone: subtract RF from total-return series, leave spreads as-is.
         return isSpread ? p : { d: p.d, r: p.r - rf };
       }
@@ -311,7 +312,7 @@
   // Geometric mean and max drawdown always compound the actual (simple) monthly returns —
   // the wealth path — regardless of logMode; every other moment (mean, vol, SE, t-stat,
   // Sharpe, years-to-significance) is computed on log or simple monthly returns per logMode.
-  function statsForPoints(pts, winStart, winEnd){
+  function statsForPoints(pts, winStart, winEnd, sharpePts){
     pts = pts.filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; });
     if (pts.length < 2) return null;
     var n = pts.length;
@@ -333,8 +334,16 @@
     var seMean = vol / Math.sqrt(years);           // SE(mean, ann.) = sigma_ann / sqrt(Y)
     var seVolM = n > 1 ? sd / Math.sqrt(2*(n-1)) : 0;
     var seVol = n > 1 ? vol / Math.sqrt(2*(n-1)) : 0;  // SE(vol, ann.) ~= sigma_ann / sqrt(2(n-1))
-    var sharpeM = volM > 0 ? meanM / volM : 0;
-    var sharpe = vol > 0 ? mean / vol : 0;
+    // Sharpe is always on excess returns (over the T-bill rate), whatever the total/excess toggle says.
+    var sharpeM = null, sharpe = null;
+    if (sharpePts){
+      var xs = sharpePts.filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; })
+        .map(function(p){ return logMode ? Math.log(1+p.r) : p.r; });
+      var xMean = xs.reduce(function(a,b){return a+b;},0) / xs.length;
+      var xSd = stdev(xs);
+      sharpeM = xSd > 0 ? xMean / xSd : 0;
+      sharpe = xSd > 0 ? (xMean * 12) / (xSd * Math.sqrt(12)) : 0;
+    }
     var tstat = sd > 0 ? meanM / (sd / Math.sqrt(n)) : 0;
     var yStar = mean !== 0 ? Math.min(999, Math.pow(1.96 * vol / mean, 2)) : 999;  // years needed for a significant mean
 
@@ -347,7 +356,7 @@
     };
   }
   function windowedStats(key, winStart, winEnd){
-    return statsForPoints(effectivePoints(key), winStart, winEnd);
+    return statsForPoints(effectivePoints(key), winStart, winEnd, basisPoints(key, true));
   }
 
   // ---------- tiles ----------
@@ -363,13 +372,15 @@
     var seVolV = monthlyMode ? fmtPct(s.seVolM, 2) : fmtPct(s.seVol);
     var sharpeV = monthlyMode ? s.sharpeM : s.sharpe;
     var momentWord = logMode ? 'log' : 'simple';
+    var basisTag = (monthlyMode ? 'monthly' : 'annualized') + ' &middot; ' + momentWord + ' &middot; ' + (excessMode ? 'excess' : 'total');
     return '<div class="k" style="color:'+color+'">'+label+'</div>' +
       '<div class="v">'+meanV+' &plusmn;'+seMeanV+' / '+geoV+'</div>' +
       '<div class="sub" style="margin-top:-4px;">arithmetic mean ('+momentWord+') &plusmn;1.96 SE / geometric mean</div>' +
       '<div class="sub">Vol '+volV+' &plusmn;'+seVolV+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
-      (showSharpe && excessMode ? '<div class="sub">Sharpe '+sharpeV.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
+      (showSharpe ? '<div class="sub">Sharpe (excess) '+sharpeV.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '<div class="sub">t-stat '+s.tstat.toFixed(1)+'</div>') +
       '<div class="sub">Y* for significant mean &asymp; '+Math.round(s.yStar)+' years</div>' +
-      '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
+      '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>' +
+      '<div class="sub">'+basisTag+'</div>';
   }
   function renderTiles(winStart, winEnd){
     var el = document.getElementById('tiles');
@@ -698,16 +709,29 @@
     });
   }
 
-  // Combined y-domain across both rolling charts (and any bands), so the mean and vol
-  // charts share one pixel-per-percentage-point scale and band widths are visually comparable.
-  function sharedYDomain(pointArraysList){
-    var vals = [];
-    pointArraysList.forEach(function(arr){ arr.forEach(function(p){ vals.push(p.v); }); });
-    if (!vals.length) return { lo:-0.1, hi:0.1 };
-    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    if (lo === hi){ lo -= 0.05; hi += 0.05; }
-    var pad = (hi - lo) * 0.08;
-    return { lo: lo - pad, hi: hi + pad };
+  // Both rolling charts get the same y-axis SPAN (in percentage points) so band widths are
+  // visually comparable; each chart is positioned on its own data (vol stays at or above 0).
+  // The span is a multiple of 20pp and the axis floor a multiple of 5pp, so ticks fall every 5pp or more.
+  function sharedSpanDomains(meanArrays, volArrays){
+    function range(arrs){
+      var vals = [];
+      arrs.forEach(function(arr){ arr.forEach(function(p){ vals.push(p.v); }); });
+      return vals.length ? { lo: Math.min.apply(null, vals), hi: Math.max.apply(null, vals) } : null;
+    }
+    var m = range(meanArrays), v = range(volArrays);
+    var ranges = [m, v].filter(Boolean);
+    if (!ranges.length) return { mean:{lo:-0.1, hi:0.1}, vol:{lo:-0.1, hi:0.1} };
+    var maxRange = Math.max.apply(null, ranges.map(function(r){ return r.hi - r.lo; }));
+    var S = Math.max(0.2, Math.ceil((maxRange + 0.05) / 0.2 - 1e-9) * 0.2);
+    function place(r, floorZero){
+      if (!r) return { lo:0, hi:S };
+      var lo = Math.round(((r.lo + r.hi) / 2 - S / 2) / 0.05) * 0.05;
+      if (floorZero && lo < 0) lo = 0;
+      lo = Math.min(lo, Math.floor(r.lo / 0.05 + 1e-9) * 0.05);
+      lo = Math.max(lo, Math.ceil((r.hi - S) / 0.05 - 1e-9) * 0.05);
+      return { lo: lo, hi: lo + S };
+    }
+    return { mean: place(m, false), vol: place(v, true) };
   }
 
   function renderRolling(){
@@ -727,9 +751,9 @@
         var pts = rollingVolSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
         return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
       });
-      var dom = sharedYDomain(meanSeries.concat(volSeries).map(function(s){ return s.points; }));
-      renderLineChart('chart-rolling', meanSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.lo, yMax: dom.hi });
-      renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.lo, yMax: dom.hi });
+      var dom = sharedSpanDomains(meanSeries.map(function(s){ return s.points; }), volSeries.map(function(s){ return s.points; }));
+      renderLineChart('chart-rolling', meanSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.mean.lo, yMax: dom.mean.hi });
+      renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.vol.lo, yMax: dom.vol.hi });
     } else {
       var key = focusSeries;
       var stats = rollingStatsSeries(key, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
@@ -743,14 +767,14 @@
       var color = COLORS[key];
       bandsCaption.hidden = stats.length === 0;
 
-      var dom2 = sharedYDomain([meanPts, volPts, meanUpper, meanLower, volUpper, volLower]);
+      var dom2 = sharedSpanDomains([meanPts, meanUpper, meanLower], [volPts, volUpper, volLower]);
       renderLineChart('chart-rolling', [{ key:key, label:DATA.series[key].label, color:color, points: meanPts }], {
-        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.lo, yMax: dom2.hi,
+        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.mean.lo, yMax: dom2.mean.hi,
         bands: [{ upper: meanUpper, lower: meanLower, color: color }],
         refLines: full ? [{ value: full.mean, color: color }] : []
       });
       renderLineChart('chart-rolling-vol', [{ key:key, label:DATA.series[key].label, color:color, points: volPts }], {
-        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.lo, yMax: dom2.hi,
+        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.vol.lo, yMax: dom2.vol.hi,
         bands: [{ upper: volUpper, lower: volLower, color: color }],
         refLines: full ? [{ value: full.vol, color: color }] : []
       });
