@@ -192,6 +192,13 @@ def main():
         "Long/short self-financing excess return, US equities.",
         is_excess=True,
     )
+    dataset["series"]["BOND"] = series_meta(
+        parse_price_csv(RAW / "VBMFX_monthly_price.csv"),
+        "US Bonds (VBMFX, proxy for Bloomberg US Aggregate)",
+        "bond",
+        "Yahoo Finance (VBMFX mutual fund), dividend-adjusted",
+        "Vanguard Total Bond Market Index Fund used as a liquid proxy for the Bloomberg US Aggregate Bond Index. Adjusted closes already include reinvested distributions, so monthly changes are total returns; as a fund (not the raw index), these returns are net of a small expense ratio.",
+    )
 
     for key, s in dataset["series"].items():
         print(f"{key}: {s['start']} -> {s['end']} ({len(s['data'])} months)")

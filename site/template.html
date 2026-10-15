@@ -124,6 +124,10 @@
       <input type="checkbox" id="excess-toggle">
       <span>Excess returns net for the 1-month T-bill rate</span>
     </label>
+    <label class="excess-toggle">
+      <input type="checkbox" id="monthly-toggle">
+      <span>Show monthly (not annualized) return statistics in the tiles</span>
+    </label>
   </section>
 
   <section class="tiles" id="tiles"></section>
@@ -165,7 +169,7 @@
   <section class="panel hidden" id="panel-pattern">
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">The white dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all seven series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns plus its own fitted normal curve (same color, dashed) — where either departs from the white reference curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+    <p class="cap">The dark dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all eight series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns plus its own fitted normal curve (same color, dashed) — where either departs from the reference curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
   </section>
 
   <section class="sources">
@@ -193,10 +197,11 @@
     MOM:  "#7c3aed",
     VAL:  "#dc2626",
     BAB:  "#0891b2",
-    QMJ:  "#db2777"
+    QMJ:  "#db2777",
+    BOND: "#65a30d"
   };
-  var ORDER = ["SPX","EM","EAFE","MOM","VAL","BAB","QMJ"];
-  var visible = {}; ORDER.forEach(function(k){ visible[k] = true; });
+  var ORDER = ["SPX","EM","EAFE","MOM","VAL","BAB","QMJ","BOND"];
+  var visible = {}; ORDER.forEach(function(k){ visible[k] = (k === 'SPX' || k === 'BOND'); });
 
   // ---------- theme ----------
   var themeBtn = document.getElementById('theme-toggle');
@@ -222,6 +227,7 @@
     });
   }
   var excessMode = false;
+  var monthlyMode = false;
   var RF_MAP = {};
   Object.keys(DATA.riskfree.data).forEach(function(mk){ RF_MAP[monthKeyToDate(mk).getTime()] = DATA.riskfree.data[mk]; });
   function effectivePoints(key){
@@ -272,26 +278,57 @@
   function fmtPct(x, d){ return (x*100).toFixed(d==null?1:d) + "%"; }
   function fmtDate(d){ return d.toLocaleDateString('en-US',{month:'short', year:'numeric', timeZone:'UTC'}); }
 
-  function windowedStats(key, winStart, winEnd){
-    var pts = effectivePoints(key).filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; });
+  function rfPoints(){
+    return Object.keys(DATA.riskfree.data).sort().map(function(mk){
+      return { d: monthKeyToDate(mk), r: DATA.riskfree.data[mk] };
+    });
+  }
+
+  // n monthly returns span n/12 years (not the calendar gap between the first and last
+  // month, which is (n-1)/12 and overstates annualized figures on short windows).
+  function statsForPoints(pts, winStart, winEnd){
+    pts = pts.filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; });
     if (pts.length < 2) return null;
     var rets = pts.map(function(p){return p.r;});
+    var n = pts.length;
     var nav = 1, cum = [];
     pts.forEach(function(p){ nav *= (1+p.r); cum.push({d:p.d, v:nav}); });
-    var years = Math.max((cum[cum.length-1].d - cum[0].d) / (365.25*24*3600*1000), 1/12);
-    var cagr = Math.pow(nav, 1/years) - 1;
-    var cc = Math.log(nav) / years;
+    var cagrM = Math.pow(nav, 1/n) - 1;          // monthly geometric mean
+    var cagr = Math.pow(1+cagrM, 12) - 1;         // annualized geometric mean
+    var ccM = Math.log(nav) / n;                  // monthly arithmetic mean of log returns
+    var cc = ccM * 12;                            // annualized arithmetic mean of log returns
     var sd = stdev(rets);
+    var volM = sd;
     var vol = sd * Math.sqrt(12);
-    var mean = rets.reduce(function(a,b){return a+b;},0) / rets.length;
+    var mean = rets.reduce(function(a,b){return a+b;},0) / n;
+    var sharpeM = volM > 0 ? mean / volM : 0;
     var sharpe = vol > 0 ? (mean*12) / vol : 0;
-    var tstat = sd > 0 ? mean / (sd / Math.sqrt(rets.length)) : 0;
+    var tstat = sd > 0 ? mean / (sd / Math.sqrt(n)) : 0;
     var peak = -Infinity, maxDd = 0;
     cum.forEach(function(p){ peak = Math.max(peak, p.v); maxDd = Math.min(maxDd, p.v/peak - 1); });
-    return { cagr: cagr, cc: cc, vol: vol, maxDd: maxDd, sharpe: sharpe, tstat: tstat, start: pts[0].d, end: pts[pts.length-1].d };
+    return { cagr: cagr, cc: cc, vol: vol, sharpe: sharpe, cagrM: cagrM, ccM: ccM, volM: volM, sharpeM: sharpeM, maxDd: maxDd, tstat: tstat, start: pts[0].d, end: pts[pts.length-1].d };
+  }
+  function windowedStats(key, winStart, winEnd){
+    return statsForPoints(effectivePoints(key), winStart, winEnd);
   }
 
   // ---------- tiles ----------
+  function tileHTML(label, color, s, showSharpe){
+    if (!s){
+      return '<div class="k" style="color:'+color+'">'+label+'</div>' +
+        '<div class="sub">No data in this window</div>';
+    }
+    var meanV = monthlyMode ? fmtPct(s.ccM, 2) : fmtPct(s.cc);
+    var geoV = monthlyMode ? fmtPct(s.cagrM, 2) : fmtPct(s.cagr);
+    var volV = monthlyMode ? fmtPct(s.volM, 2) : fmtPct(s.vol);
+    var sharpeV = monthlyMode ? s.sharpeM : s.sharpe;
+    return '<div class="k" style="color:'+color+'">'+label+'</div>' +
+      '<div class="v">'+meanV+' / '+geoV+'</div>' +
+      '<div class="sub" style="margin-top:-4px;">arithmetic mean (log) / geometric mean</div>' +
+      '<div class="sub">Vol '+volV+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
+      (showSharpe && excessMode ? '<div class="sub">Sharpe '+sharpeV.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
+      '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
+  }
   function renderTiles(winStart, winEnd){
     var el = document.getElementById('tiles');
     el.innerHTML = '';
@@ -300,28 +337,21 @@
       var s = windowedStats(key, winStart, winEnd);
       var div = document.createElement('div');
       div.className = 'tile';
-      if (!s){
-        div.innerHTML =
-          '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
-          '<div class="sub">No data in this window</div>';
-      } else {
-        div.innerHTML =
-          '<div class="k" style="color:'+COLORS[key]+'">'+meta.label+'</div>' +
-          '<div class="v">'+fmtPct(s.cc)+' / '+fmtPct(s.cagr)+'</div>' +
-          '<div class="sub" style="margin-top:-4px;">cont. compounded / CAGR</div>' +
-          '<div class="sub">Vol '+fmtPct(s.vol)+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
-          (excessMode ? '<div class="sub">Sharpe '+s.sharpe.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
-          '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
-      }
+      div.innerHTML = tileHTML(meta.label, COLORS[key], s, true);
       el.appendChild(div);
     });
+    var rfS = statsForPoints(rfPoints(), winStart, winEnd);
+    var rfDiv = document.createElement('div');
+    rfDiv.className = 'tile';
+    rfDiv.innerHTML = tileHTML(DATA.riskfree.label, 'var(--muted)', rfS, false);
+    el.appendChild(rfDiv);
   }
 
   // ---------- legend ----------
   function renderLegend(){
     var el = document.getElementById('legend');
     el.innerHTML = '';
-    var groups = { index: { title:'Equity Indices', keys:[] }, factor: { title:'AQR Factors', keys:[] } };
+    var groups = { index: { title:'Equity Indices', keys:[] }, factor: { title:'AQR Factors', keys:[] }, bond: { title:'Fixed Income', keys:[] } };
     ORDER.forEach(function(k){ groups[DATA.series[k].category].keys.push(k); });
     Object.keys(groups).forEach(function(g){
       var gdiv = document.createElement('div');
@@ -670,7 +700,7 @@
     }
 
     // Single reference normal curve, centered at 0% (not fit to the data's mean) with a
-    // standard deviation taken from the pooled monthly returns of all seven series, shown
+    // standard deviation taken from the pooled monthly returns of all eight series, shown
     // at all times regardless of which (if any) series are checked.
     var pooled = [];
     allStats.forEach(function(s){ pooled = pooled.concat(s.rets); });
@@ -777,7 +807,8 @@
     MOM: { desc: "A long-only index of U.S. large-cap stocks with strong recent price momentum.", url: "https://www.aqr.com/Insights/Datasets/Momentum-Indices-Monthly" },
     VAL: { desc: "A long/short portfolio that buys cheap (high book-to-market) U.S. stocks and shorts expensive ones, isolating the value premium.", url: "https://www.aqr.com/Insights/Datasets/The-Devil-in-HMLs-Details-Factors-Monthly" },
     BAB: { desc: "A long/short portfolio that buys low-beta stocks and shorts high-beta stocks, isolating the return to low-risk investing.", url: "https://www.aqr.com/Insights/Datasets/Betting-Against-Beta-Equity-Factors-Monthly" },
-    QMJ: { desc: "A long/short portfolio that buys high-quality (profitable, growing, safe) stocks and shorts low-quality ones.", url: "https://www.aqr.com/Insights/Datasets/Quality-Minus-Junk-Factors-Monthly" }
+    QMJ: { desc: "A long/short portfolio that buys high-quality (profitable, growing, safe) stocks and shorts low-quality ones.", url: "https://www.aqr.com/Insights/Datasets/Quality-Minus-Junk-Factors-Monthly" },
+    BOND:{ desc: "A broad basket of U.S. investment-grade bonds (Treasuries, agency, and corporate debt), tracked here via a liquid mutual-fund proxy.", url: "https://finance.yahoo.com/quote/VBMFX" }
   };
 
   function renderSources(){
@@ -787,14 +818,14 @@
       var info = SOURCE_INFO[k];
       return '<li><strong>'+s.label+':</strong> '+info.desc+' <a href="'+info.url+'" target="_blank" rel="noopener">'+s.source+'</a></li>';
     });
-    items.push('<li><strong>'+DATA.riskfree.label+':</strong> The return on a virtually riskless short-term investment. By default it is added to Value, BAB, and QMJ\u2019s long/short spread so every series sits on the same total-return basis; the excess-returns toggle instead subtracts it from the indices and Momentum, putting every series on an excess-return basis. <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" target="_blank" rel="noopener">Kenneth French Data Library</a></li>');
+    items.push('<li><strong>'+DATA.riskfree.label+':</strong> The return on a virtually riskless short-term investment. By default it is added to Value, BAB, and QMJ\u2019s long/short spread so every series sits on the same total-return basis; the excess-returns toggle instead subtracts it from the indices, Momentum, and Bonds, putting every series on an excess-return basis. <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" target="_blank" rel="noopener">Kenneth French Data Library</a></li>');
     el.innerHTML = items.join('');
   }
 
   function basisNote(){
     return excessMode
-      ? ' Shown as excess returns above the 1-month T-bill rate for every series \u2014 Value, BAB, and QMJ in their pure long/short form, and the indices and Momentum net of the risk-free rate.'
-      : ' Shown as total returns for every series \u2014 Value, BAB, and QMJ include the 1-month T-bill rate on top of their long/short spread (a fully collateralized return), matching the basis of the indices and Momentum.';
+      ? ' Shown as excess returns above the 1-month T-bill rate for every series \u2014 Value, BAB, and QMJ in their pure long/short form, and the indices, Momentum, and Bonds net of the risk-free rate.'
+      : ' Shown as total returns for every series \u2014 Value, BAB, and QMJ include the 1-month T-bill rate on top of their long/short spread (a fully collateralized return), matching the basis of the indices, Momentum, and Bonds.';
   }
 
   function renderAll(){
@@ -830,6 +861,10 @@
   initRollSlider();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
+    renderAll();
+  });
+  document.getElementById('monthly-toggle').addEventListener('change', function(e){
+    monthlyMode = e.target.checked;
     renderAll();
   });
   applyTheme(localStorage.getItem('eq-dash-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
