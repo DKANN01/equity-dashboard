@@ -72,6 +72,24 @@
   .window-slider strong{color:var(--ink);}
   .window-slider select{background:var(--card); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:.78rem; font-family:inherit; cursor:pointer;}
   .band-caption{font-style:italic;}
+  .legend.hidden{display:none;}
+  .sim-grid{display:grid; grid-template-columns:236px 1fr; gap:16px; align-items:start;}
+  .sim-inputs{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:10px; font-size:.76rem; color:var(--muted);}
+  .sim-inputs label{display:flex; flex-direction:column; gap:3px;}
+  .sim-inputs label.chk{flex-direction:row; align-items:flex-start; gap:6px; cursor:pointer;}
+  .sim-inputs label.chk input{margin-top:2px; accent-color:var(--accent);}
+  .sim-inputs input[type=number], .sim-inputs select{background:var(--bg); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:4px 6px; font-size:.78rem; font-family:inherit; width:100%;}
+  .sim-inputs button{background:none; border:1px solid var(--border); color:var(--ink); border-radius:6px; padding:5px 8px; cursor:pointer; font-family:inherit; font-size:.76rem;}
+  .sim-inputs .row{display:flex; gap:6px; align-items:center;}
+  .sim-inputs hr{border:none; border-top:1px solid var(--border); width:100%; margin:2px 0;}
+  .sim-table{border-collapse:collapse; width:100%; font-size:.74rem;}
+  .sim-table th,.sim-table td{border:1px solid var(--border); padding:5px 7px; text-align:right;}
+  .sim-table th{background:var(--card); font-weight:600;}
+  .sim-table th:first-child,.sim-table td:first-child{text-align:left;}
+  .sim-outputs h2{margin-top:6px;}
+  .sim-outputs .cap{margin-bottom:14px;}
+  .sim-legend{display:flex; flex-wrap:wrap; gap:12px; font-size:.72rem; color:var(--muted); margin:6px 0 0;}
+  @media (max-width:760px){ .sim-grid{grid-template-columns:1fr;} }
   .chart{width:100%; height:260px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:relative;}
   .chart svg{width:100%; height:100%; display:block; overflow:visible;}
   .axis-label{font-size:9px; fill:var(--muted);}
@@ -143,6 +161,7 @@
     <button class="tab" data-tab="rolling" type="button">Rolling Returns and Volatility</button>
     <button class="tab" data-tab="corr" type="button">Correlation</button>
     <button class="tab" data-tab="pattern" type="button">Return Pattern</button>
+    <button class="tab" data-tab="sim" type="button">Simulation</button>
   </nav>
 
   <section class="legend" id="legend"></section>
@@ -181,6 +200,49 @@
     <h2>Distribution of monthly returns</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
     <p class="cap">The dark dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all eight series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns plus its own fitted normal curve (same color, dashed) — where either departs from the reference curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+  </section>
+
+  <section class="panel hidden" id="panel-sim">
+    <div class="sim-grid">
+      <div class="sim-inputs">
+        <label>Strategy <select id="sim-series"></select></label>
+        <label>&mu; (annualized mean log return, %) <input type="number" id="sim-mu" step="0.1"></label>
+        <label>&sigma; (annualized vol of log returns, %) <input type="number" id="sim-sigma" step="0.1" min="0"></label>
+        <div class="cap" id="sim-est" style="margin:0;"></div>
+        <button type="button" id="sim-reset-est">Reset &mu;, &sigma; to estimates</button>
+        <hr>
+        <label>Initial wealth ($ millions) <input type="number" id="sim-w0" value="100" min="1" step="10"></label>
+        <label>Horizon (years, 1&ndash;30) <input type="number" id="sim-horizon" value="20" min="1" max="30" step="1"></label>
+        <label>Annual spend ($ millions) <input type="number" id="sim-spend" value="0" min="0" step="1"></label>
+        <label>Annual contribution ($ millions) <input type="number" id="sim-contrib" value="0" min="0" step="1"></label>
+        <label>Paths <select id="sim-paths"><option value="1000">1,000</option><option value="5000">5,000</option><option value="10000" selected>10,000</option></select></label>
+        <label>Seed <span class="row"><input type="number" id="sim-seed" value="12345" step="1"><button type="button" id="sim-resample">Resample</button></span></label>
+        <hr>
+        <label class="chk"><input type="checkbox" id="sim-logy"><span>Log y-axis</span></label>
+        <label class="chk"><input type="checkbox" id="sim-muerr"><span>Show estimation risk in &mu; (reruns at &mu; &minus; 1.96 SE, &mu;&#770;, &mu; + 1.96 SE, same draws)</span></label>
+        <label class="chk"><input type="checkbox" id="sim-sigerr"><span>Show estimation risk in &sigma; (same, for &sigma;)</span></label>
+      </div>
+      <div class="sim-outputs">
+        <h2>Wealth fan</h2>
+        <div class="chart" id="sim-fan" style="height:300px;"></div>
+        <div class="sim-legend" id="sim-fan-legend"></div>
+        <p class="cap" id="sim-fan-cap"></p>
+        <h2>Outcomes by horizon</h2>
+        <div id="sim-table"></div>
+        <p class="cap" id="sim-table-cap"></p>
+        <h2>Terminal wealth, VaR and CVaR</h2>
+        <div class="chart" id="sim-hist" style="height:240px;"></div>
+        <p class="cap" id="sim-hist-cap"></p>
+        <h2>Shortfall probability vs. the risk-free rate</h2>
+        <div id="sim-shortfall"></div>
+        <p class="cap" id="sim-shortfall-cap"></p>
+        <h2>Maximum drawdown</h2>
+        <div class="chart" id="sim-mdd" style="height:240px;"></div>
+        <p class="cap" id="sim-mdd-cap"></p>
+        <h2>Monte Carlo error</h2>
+        <p class="cap" id="sim-mc" style="font-size:.8rem;"></p>
+      </div>
+    </div>
   </section>
 
   <section class="sources">
@@ -368,8 +430,8 @@
     var meanV = monthlyMode ? fmtPct(s.meanM, 2) : fmtPct(s.mean);
     var geoV = monthlyMode ? fmtPct(s.cagrM, 2) : fmtPct(s.cagr);
     var volV = monthlyMode ? fmtPct(s.volM, 2) : fmtPct(s.vol);
-    var seMeanV = monthlyMode ? fmtPct(s.seMeanM, 2) : fmtPct(s.seMean);
-    var seVolV = monthlyMode ? fmtPct(s.seVolM, 2) : fmtPct(s.seVol);
+    var seMeanV = monthlyMode ? fmtPct(1.96 * s.seMeanM, 2) : fmtPct(1.96 * s.seMean);
+    var seVolV = monthlyMode ? fmtPct(1.96 * s.seVolM, 2) : fmtPct(1.96 * s.seVol);
     var sharpeV = monthlyMode ? s.sharpeM : s.sharpe;
     var momentWord = logMode ? 'log' : 'simple';
     var basisTag = (monthlyMode ? 'monthly' : 'annualized') + ' &middot; ' + momentWord + ' &middot; ' + (excessMode ? 'excess' : 'total');
@@ -955,6 +1017,296 @@
     container.appendChild(svg);
   }
 
+  // ---------- simulation tab (Lecture 8) ----------
+  var sim = { key:'SPX', mu:0.07, sigma:0.18, w0:100, horizon:20, spend:0, contrib:0, paths:10000, seed:12345, logY:false, err:'none', estSig:null, est:null, zKey:null, Z:null };
+
+  function normCdf(x){                      // Abramowitz-Stegun 7.1.26 erf approximation
+    var sign = x < 0 ? -1 : 1, z = Math.abs(x) / Math.SQRT2, t = 1 / (1 + 0.3275911 * z);
+    var erf = 1 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t - 0.284496736)*t + 0.254829592) * t * Math.exp(-z*z);
+    return 0.5 * (1 + sign * erf);
+  }
+  function mulberry32(a){
+    return function(){
+      a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function makeZ(seed, n, h){               // Box-Muller; path-major: Z[i*h + (t-1)]
+    var rnd = mulberry32(seed), z = new Float32Array(n * h), TWO_PI = 2 * Math.PI;
+    for (var i = 0; i < z.length; i += 2){
+      var u1 = rnd() || 1e-12, u2 = rnd(), r = Math.sqrt(-2 * Math.log(u1));
+      z[i] = r * Math.cos(TWO_PI * u2);
+      if (i + 1 < z.length) z[i+1] = r * Math.sin(TWO_PI * u2);
+    }
+    return z;
+  }
+  // r = mu*dt + sigma*sqrt(dt)*z with dt = 1; V(t+1) = max(V(t)*e^r - spend + contrib, 0); zero is absorbing.
+  function simulate(Z, n, h, mu, sigma, w0, spend, contrib){
+    var V = [new Float64Array(n).fill(w0)], cum = [new Float64Array(n)];
+    for (var t = 1; t <= h; t++){
+      var prev = V[t-1], cp = cum[t-1], cur = new Float64Array(n), cc = new Float64Array(n);
+      for (var i = 0; i < n; i++){
+        var r = mu + sigma * Z[i*h + (t-1)];
+        cc[i] = cp[i] + r;
+        var v = prev[i];
+        if (v > 0){ v = v * Math.exp(r) - spend + contrib; if (v < 0) v = 0; }
+        cur[i] = v;
+      }
+      V.push(cur); cum.push(cc);
+    }
+    return { V: V, cum: cum };
+  }
+  function pctile(sorted, p){               // Excel PERCENTILE.INC
+    var pos = (sorted.length - 1) * p, lo = Math.floor(pos), hi = Math.ceil(pos);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  }
+  function yearSummary(arr, w0){
+    var sorted = Float64Array.from(arr).sort(), n = sorted.length, sum = 0, below = 0, zero = 0;
+    for (var i = 0; i < n; i++){ sum += sorted[i]; if (sorted[i] < w0) below++; if (sorted[i] <= 0) zero++; }
+    var mean = sum / n, ss = 0;
+    for (var j = 0; j < n; j++) ss += (sorted[j] - mean) * (sorted[j] - mean);
+    return { sorted: sorted, mean: mean, sd: Math.sqrt(ss / (n - 1)), p5: pctile(sorted, .05), p25: pctile(sorted, .25), median: pctile(sorted, .5), p75: pctile(sorted, .75), p95: pctile(sorted, .95), pBelow: below / n, pZero: zero / n };
+  }
+  function fmtM(v){
+    var neg = v < 0 ? '-' : '', a = Math.abs(v);
+    if (a >= 1000) return neg + '$' + (a/1000).toFixed(2) + 'bn';
+    return neg + '$' + a.toFixed(a >= 100 ? 0 : 1) + 'M';
+  }
+  function fmtP(x, d){ return (x*100).toFixed(d == null ? 1 : d) + '%'; }
+
+  // log-return moments of the chosen series over the global date range (same basis as the tiles' mean and vol)
+  function simEstimates(key){
+    var win = windowBounds();
+    var rets = effectivePoints(key).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+      .map(function(p){ return Math.log(1 + p.r); });
+    var n = rets.length;
+    if (n < 3) return null;
+    var m = rets.reduce(function(a,b){return a+b;},0) / n, sd = stdev(rets);
+    var sigma = sd * Math.sqrt(12), years = n / 12;
+    var rf = rfPoints().filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+      .map(function(p){ return Math.log(1 + p.r); });
+    var rfAnn = rf.length ? 12 * rf.reduce(function(a,b){return a+b;},0) / rf.length : 0;
+    return { n: n, years: years, mu: m * 12, sigma: sigma, seMu: sigma / Math.sqrt(years), seSigma: sigma / Math.sqrt(2 * (n - 1)), rf: rfAnn };
+  }
+
+  // Generic numeric-x SVG chart: bands, lines, bars, vertical markers.
+  function renderXY(containerId, cfg){
+    var container = document.getElementById(containerId);
+    container.innerHTML = '';
+    var W = container.clientWidth || 640, H = container.clientHeight || 260;
+    var padL = 50, padR = 12, padT = 10, padB = 22, plotW = W - padL - padR, plotH = H - padT - padB;
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    function el(name, attrs){ var e = document.createElementNS(svgNS, name); for (var k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
+    var log = !!cfg.log, yLo = cfg.yMin, yHi = cfg.yMax;
+    function xPix(x){ return padL + (x - cfg.xMin) / (cfg.xMax - cfg.xMin) * plotW; }
+    function yPix(y){
+      if (log){ var l = Math.log(Math.max(y, yLo)); return padT + plotH - (l - Math.log(yLo)) / (Math.log(yHi) - Math.log(yLo)) * plotH; }
+      return padT + plotH - (y - yLo) / (yHi - yLo) * plotH;
+    }
+    for (var i = 0; i <= 4; i++){
+      var val = log ? Math.exp(Math.log(yLo) + (Math.log(yHi) - Math.log(yLo)) * i / 4) : yLo + (yHi - yLo) * i / 4;
+      var yy = yPix(val);
+      el('line', { x1: padL, x2: W - padR, y1: yy, y2: yy, 'class': 'gridline' });
+      var t = el('text', { x: 4, y: yy + 3, 'class': 'axis-label' }); t.textContent = cfg.yFmt(val);
+    }
+    (cfg.xTicks || []).forEach(function(x){
+      var t = el('text', { x: xPix(x), y: H - 4, 'class': 'axis-label', 'text-anchor': 'middle' }); t.textContent = cfg.xFmt ? cfg.xFmt(x) : x;
+    });
+    (cfg.bars || []).forEach(function(b){
+      var yT = yPix(b.y), yB = yPix(yLo > 0 ? yLo : 0);
+      el('rect', { x: xPix(b.x0), width: Math.max(1, xPix(b.x1) - xPix(b.x0) - 1), y: yT, height: Math.max(0, yB - yT), fill: b.color, opacity: b.opacity || .5 });
+    });
+    (cfg.bands || []).forEach(function(b){
+      var d = b.upper.map(function(p,i){ return (i ? 'L' : 'M') + xPix(p.x).toFixed(1) + ',' + yPix(p.y).toFixed(1); })
+        .concat(b.lower.slice().reverse().map(function(p){ return 'L' + xPix(p.x).toFixed(1) + ',' + yPix(p.y).toFixed(1); })).join(' ') + ' Z';
+      el('path', { d: d, fill: b.color, 'fill-opacity': b.opacity, stroke: 'none' });
+    });
+    (cfg.lines || []).forEach(function(l){
+      var d = l.pts.map(function(p,i){ return (i ? 'L' : 'M') + xPix(p.x).toFixed(1) + ',' + yPix(p.y).toFixed(1); }).join(' ');
+      var a = { d: d, fill: 'none', stroke: l.color, 'stroke-width': l.width || 1.6 };
+      if (l.dash) a['stroke-dasharray'] = l.dash;
+      el('path', a);
+    });
+    (cfg.vlines || []).forEach(function(v){
+      var x = xPix(v.x);
+      el('line', { x1: x, x2: x, y1: padT, y2: padT + plotH, stroke: v.color, 'stroke-width': 1.6, 'stroke-dasharray': v.dash || '4,3' });
+      if (v.label){ var t = el('text', { x: Math.min(x + 3, W - 60), y: padT + 10 + (v.row || 0) * 11, 'class': 'axis-label', fill: v.color }); t.textContent = v.label; }
+    });
+    container.appendChild(svg);
+  }
+  function histBars(values, lo, hi, nb, color, opacity){
+    var counts = new Array(nb).fill(0), w = (hi - lo) / nb;
+    values.forEach(function(v){ var k = Math.min(nb - 1, Math.max(0, Math.floor((v - lo) / w))); counts[k]++; });
+    var bars = counts.map(function(c, k){ return { x0: lo + k*w, x1: lo + (k+1)*w, y: c / values.length, color: color, opacity: opacity }; });
+    return { bars: bars, maxY: Math.max.apply(null, bars.map(function(b){ return b.y; })) };
+  }
+
+  function syncSimInputs(){
+    document.getElementById('sim-mu').value = (sim.mu * 100).toFixed(2);
+    document.getElementById('sim-sigma').value = (sim.sigma * 100).toFixed(2);
+  }
+  function renderSim(){
+    var est = simEstimates(sim.key);
+    var sig = sim.key + '|' + windowRange.startIdx + '|' + windowRange.endIdx + '|' + excessMode;
+    if (!est){
+      document.getElementById('sim-est').textContent = 'Not enough data in the selected date range.';
+      ['sim-fan','sim-hist','sim-mdd'].forEach(function(id){ document.getElementById(id).innerHTML = ''; });
+      return;
+    }
+    sim.est = est;
+    if (sim.estSig !== sig){ sim.estSig = sig; sim.mu = est.mu; sim.sigma = est.sigma; syncSimInputs(); }
+    document.getElementById('sim-est').innerHTML = 'Estimated from ' + est.n + ' monthly log returns (' + est.years.toFixed(1) + ' years): &mu; = ' + fmtP(est.mu, 2) + ' &plusmn; ' + fmtP(1.96*est.seMu, 2) + ', &sigma; = ' + fmtP(est.sigma, 2) + ' &plusmn; ' + fmtP(1.96*est.seSigma, 2) + ' (&plusmn;1.96 SE). ' + (excessMode ? 'Excess-return basis.' : 'Total-return basis.');
+
+    var h = sim.horizon, n = sim.paths;
+    var zKey = sim.seed + '|' + n + '|' + h;
+    if (sim.zKey !== zKey){ sim.Z = makeZ(sim.seed, n, h); sim.zKey = zKey; }
+
+    // cases: one, or three when an estimation-risk switch is on (same z draws for all)
+    var cases;
+    if (sim.err === 'mu'){
+      cases = [
+        { name: 'µ − 1.96 SE', mu: sim.mu - 1.96*est.seMu, sigma: sim.sigma, color: '#c0362c' },
+        { name: 'µ̂ (as set)', mu: sim.mu, sigma: sim.sigma, color: 'var(--accent)', central: true },
+        { name: 'µ + 1.96 SE', mu: sim.mu + 1.96*est.seMu, sigma: sim.sigma, color: '#059669' }];
+    } else if (sim.err === 'sigma'){
+      cases = [
+        { name: 'σ − 1.96 SE', mu: sim.mu, sigma: Math.max(sim.sigma - 1.96*est.seSigma, 0.001), color: '#c0362c' },
+        { name: 'σ̂ (as set)', mu: sim.mu, sigma: sim.sigma, color: 'var(--accent)', central: true },
+        { name: 'σ + 1.96 SE', mu: sim.mu, sigma: sim.sigma + 1.96*est.seSigma, color: '#059669' }];
+    } else {
+      cases = [{ name: 'Median', mu: sim.mu, sigma: sim.sigma, color: 'var(--accent)', central: true }];
+    }
+    cases.forEach(function(c){
+      c.run = simulate(sim.Z, n, h, c.mu, c.sigma, sim.w0, sim.spend, sim.contrib);
+      c.years = c.run.V.map(function(v){ return yearSummary(v, sim.w0); });
+    });
+    var base = cases.filter(function(c){ return c.central; })[0];
+
+    // ---- fan chart ----
+    var yrs = []; for (var t = 0; t <= h; t++) yrs.push(t);
+    function series(f){ return yrs.map(function(t){ return { x: t, y: f(base.years[t]) }; }); }
+    var allVals = [];
+    cases.forEach(function(c){ c.years.forEach(function(y){ allVals.push(y.median); }); });
+    base.years.forEach(function(y){ allVals.push(y.p5, y.p95); });
+    var pos = allVals.filter(function(v){ return v > 0; });
+    var yMax = Math.max.apply(null, allVals) * 1.05, yMin, yLo;
+    if (sim.logY){ yLo = Math.max(Math.min.apply(null, pos) * 0.8, sim.w0 * 1e-3); yMin = yLo; } else { yMin = 0; }
+    var xt = []; var step = h > 20 ? 5 : (h > 10 ? 2 : 1); for (var tt = 0; tt <= h; tt += step) xt.push(tt);
+    var lines = [{ pts: series(function(y){ return y.p5; }), color: 'var(--muted)', width: 1.2, dash: '3,3' }, { pts: series(function(y){ return y.p95; }), color: 'var(--muted)', width: 1.2, dash: '3,3' }];
+    cases.forEach(function(c){ lines.push({ pts: yrs.map(function(t){ return { x: t, y: c.years[t].median }; }), color: c.color, width: 2 }); });
+    renderXY('sim-fan', {
+      xMin: 0, xMax: Math.max(h, 1), xTicks: xt, xFmt: function(x){ return x; },
+      yMin: yMin, yMax: yMax, log: sim.logY, yFmt: fmtM,
+      bands: [
+        { upper: series(function(y){ return y.p95; }), lower: series(function(y){ return y.p5; }), color: 'var(--accent)', opacity: .10 },
+        { upper: series(function(y){ return y.p75; }), lower: series(function(y){ return y.p25; }), color: 'var(--accent)', opacity: .20 }],
+      lines: lines
+    });
+    document.getElementById('sim-fan-legend').innerHTML = cases.map(function(c){ return '<span><span class="swatch" style="background:'+c.color+'"></span> '+(sim.err === 'none' ? 'Median' : 'Median at ' + c.name)+'</span>'; }).join('') +
+      '<span><span class="swatch" style="background:var(--accent);opacity:.35"></span> 25th&ndash;75th pct</span><span><span class="swatch" style="background:var(--accent);opacity:.15"></span> 5th&ndash;95th pct (dashed edges)</span>';
+    document.getElementById('sim-fan-cap').textContent = 'Wealth by year from ' + n.toLocaleString() + ' simulated paths with r = µ + σz, z ~ N(0,1), annual steps; V(t+1) = max(V(t)e^r − spend + contribution, 0), and a path that hits zero stays there. Bands are shown for the central case' + (sim.err === 'none' ? '.' : '; the three medians reuse the same z draws, so the gaps between them are due only to ' + (sim.err === 'mu' ? 'µ' : 'σ') + '.');
+
+    // ---- outcome table ----
+    var hz = [5,10,15,20].filter(function(x){ return x <= h; });
+    if (hz.indexOf(h) === -1) hz.push(h);
+    var tbl = '<table class="sim-table"><tr><th>Year</th><th>Mean</th><th>Median</th><th>5th pct</th><th>95th pct</th><th>P(V &lt; initial)</th>';
+    if (sim.err === 'none') tbl += '<th>P(V = 0)</th>';
+    else cases.forEach(function(c){ tbl += '<th>P(V = 0)<br>' + c.name + '</th>'; });
+    tbl += '</tr>';
+    hz.forEach(function(y){
+      var b = base.years[y];
+      tbl += '<tr><td>' + y + '</td><td>' + fmtM(b.mean) + '</td><td>' + fmtM(b.median) + '</td><td>' + fmtM(b.p5) + '</td><td>' + fmtM(b.p95) + '</td><td>' + fmtP(b.pBelow) + '</td>';
+      cases.forEach(function(c){ tbl += '<td>' + fmtP(c.years[y].pZero) + '</td>'; });
+      tbl += '</tr>';
+    });
+    document.getElementById('sim-table').innerHTML = tbl + '</table>';
+    document.getElementById('sim-table-cap').textContent = 'Initial wealth ' + fmtM(sim.w0) + '. Mean, median and percentiles are across simulated paths (central case). P(V = 0) is the probability of exhaustion.';
+
+    // ---- terminal wealth histogram, VaR / CVaR ----
+    var term = base.years[h], V = base.run.V[h];
+    var losses = Float64Array.from(V, function(v){ return sim.w0 - v; }).sort();
+    var var95 = pctile(losses, .95), tail = [], tsum = 0;
+    for (var i = 0; i < losses.length; i++){ if (losses[i] >= var95){ tsum += losses[i]; tail.push(1); } }
+    var cvar95 = tsum / tail.length;
+    var xHi = Math.max(pctile(term.sorted, .99), sim.w0 * 1.2), hb = histBars(Array.prototype.slice.call(V), 0, xHi, 40, 'var(--accent)', .45);
+    var varW = sim.w0 - var95, cvarW = sim.w0 - cvar95;
+    renderXY('sim-hist', {
+      xMin: 0, xMax: xHi, xTicks: [0, .25, .5, .75, 1].map(function(f){ return f * xHi; }), xFmt: fmtM,
+      yMin: 0, yMax: hb.maxY * 1.1, yFmt: function(v){ return fmtP(v, 1); },
+      bars: hb.bars,
+      vlines: [
+        { x: Math.max(varW, 0), color: '#c0362c', label: '95% VaR', row: 0 },
+        { x: Math.max(cvarW, 0), color: '#7c3aed', label: '95% CVaR', row: 1, dash: '2,2' },
+        { x: sim.w0, color: 'var(--muted)', label: 'initial', row: 2, dash: '1,3' }]
+    });
+    document.getElementById('sim-hist-cap').innerHTML = 'Terminal wealth after ' + h + ' years (values above the 99th percentile pile into the last bar). <strong>95% VaR</strong> = ' + (var95 >= 0 ? 'loss of ' : 'gain of ') + fmtM(Math.abs(var95)) + ' (' + fmtP(Math.abs(var95) / sim.w0) + ' of initial wealth): the loss exceeded in only 5% of paths. <strong>95% CVaR</strong> = ' + (cvar95 >= 0 ? 'loss of ' : 'gain of ') + fmtM(Math.abs(cvar95)) + ' (' + fmtP(Math.abs(cvar95) / sim.w0) + '): the average loss within that worst 5%. VaR is the best case in the tail; CVaR is the average of the tail.';
+
+    // ---- shortfall vs risk-free: simulated next to the Lecture 6 closed form ----
+    var rf = excessMode ? 0 : est.rf;
+    var sh = '<table class="sim-table"><tr><th>Horizon</th><th>Simulated</th><th>Closed form &Phi;((r<sub>f</sub> &minus; &mu;)&radic;T / &sigma;)</th></tr>';
+    hz.forEach(function(y){
+      var cnt = 0, cum = base.run.cum[y];
+      for (var i = 0; i < n; i++) if (cum[i] < rf * y) cnt++;
+      sh += '<tr><td>' + y + ' years</td><td>' + fmtP(cnt / n) + '</td><td>' + fmtP(normCdf((rf - base.mu) * Math.sqrt(y) / base.sigma)) + '</td></tr>';
+    });
+    document.getElementById('sim-shortfall').innerHTML = sh + '</table>';
+    document.getElementById('sim-shortfall-cap').textContent = 'Probability that the strategy’s cumulative log return falls short of the risk-free rate (' + fmtP(rf, 2) + ' a year, continuously compounded' + (excessMode ? '; zero on the excess-return basis' : '') + ') over the horizon. The simulation and the closed form agree up to Monte Carlo error; spending and contributions do not enter this comparison. Comparing against a second series (a blend benchmark) arrives with blends.';
+
+    // ---- max drawdown ----
+    var mdd = new Float64Array(n);
+    for (var p = 0; p < n; p++){
+      var peak = sim.w0, m = 0;
+      for (var tt2 = 1; tt2 <= h; tt2++){ var v = base.run.V[tt2][p]; if (v > peak) peak = v; var dd = v / peak - 1; if (dd < m) m = dd; }
+      mdd[p] = m;
+    }
+    var mddSorted = Float64Array.from(mdd).sort(), hbm = histBars(Array.prototype.slice.call(mdd), -1, 0, 40, '#c0362c', .45);
+    var hist = windowedStats(sim.key, windowBounds().start, windowBounds().end);
+    var vl = [{ x: pctile(mddSorted, .5), color: 'var(--ink)', label: 'simulated median', row: 0, dash: '2,2' }];
+    if (hist) vl.push({ x: hist.maxDd, color: '#7c3aed', label: 'historical (monthly)', row: 1 });
+    renderXY('sim-mdd', { xMin: -1, xMax: 0, xTicks: [-1, -.75, -.5, -.25, 0], xFmt: function(x){ return fmtP(x, 0); }, yMin: 0, yMax: hbm.maxY * 1.1, yFmt: function(v){ return fmtP(v, 1); }, bars: hbm.bars, vlines: vl });
+    document.getElementById('sim-mdd-cap').textContent = 'Distribution of the worst peak-to-trough fall along each simulated path over ' + h + ' years (median ' + fmtP(pctile(mddSorted, .5)) + ', 5th percentile ' + fmtP(pctile(mddSorted, .05)) + '). The marker shows the realized historical maximum drawdown from the tile' + (hist ? ' (' + fmtP(hist.maxDd) + ')' : '') + '. Annual steps miss intra-year falls, so simulated drawdowns run milder than monthly history.';
+
+    // ---- Monte Carlo standard error ----
+    var se = term.sd / Math.sqrt(n);
+    document.getElementById('sim-mc').innerHTML = 'Mean terminal wealth ' + fmtM(term.mean) + ' &plusmn; ' + fmtM(1.96 * se) + ' (95% CI ' + fmtM(term.mean - 1.96*se) + ' to ' + fmtM(term.mean + 1.96*se) + '); s.e. = SD / &radic;N = ' + fmtM(term.sd) + ' / &radic;' + n.toLocaleString() + ' = ' + fmtM(se) + '. Try 1,000 paths and watch the interval widen: that is why 10,000, not 100.';
+  }
+
+  function initSim(){
+    var sel = document.getElementById('sim-series');
+    sel.innerHTML = ORDER.map(function(k){ return '<option value="'+k+'">'+DATA.series[k].label+'</option>'; }).join('');
+    sel.value = sim.key;
+    sel.addEventListener('change', function(){ sim.key = sel.value; renderAll(); });
+    function num(id, fn){
+      document.getElementById(id).addEventListener('input', function(e){
+        var v = parseFloat(e.target.value);
+        if (isNaN(v)) return;
+        fn(v); renderAll();
+      });
+    }
+    num('sim-mu', function(v){ sim.mu = v / 100; });
+    num('sim-sigma', function(v){ sim.sigma = Math.max(v, 0) / 100; });
+    num('sim-w0', function(v){ sim.w0 = Math.max(v, 1); });
+    num('sim-horizon', function(v){ sim.horizon = Math.min(30, Math.max(1, Math.round(v))); });
+    num('sim-spend', function(v){ sim.spend = Math.max(v, 0); });
+    num('sim-contrib', function(v){ sim.contrib = Math.max(v, 0); });
+    num('sim-seed', function(v){ sim.seed = Math.round(v); });
+    document.getElementById('sim-paths').addEventListener('change', function(e){ sim.paths = +e.target.value; renderAll(); });
+    document.getElementById('sim-resample').addEventListener('click', function(){
+      sim.seed = 1 + Math.floor(Math.random() * 1e9);
+      document.getElementById('sim-seed').value = sim.seed;
+      renderAll();
+    });
+    document.getElementById('sim-reset-est').addEventListener('click', function(){ sim.estSig = null; renderAll(); });
+    document.getElementById('sim-logy').addEventListener('change', function(e){ sim.logY = e.target.checked; renderAll(); });
+    var muBox = document.getElementById('sim-muerr'), sigBox = document.getElementById('sim-sigerr');
+    muBox.addEventListener('change', function(){ if (muBox.checked) sigBox.checked = false; sim.err = muBox.checked ? 'mu' : (sigBox.checked ? 'sigma' : 'none'); renderAll(); });
+    sigBox.addEventListener('change', function(){ if (sigBox.checked) muBox.checked = false; sim.err = sigBox.checked ? 'sigma' : (muBox.checked ? 'mu' : 'none'); renderAll(); });
+  }
+
   var SOURCE_INFO = {
     SPX: { desc: "The CRSP value-weighted total return on all NYSE/AMEX/Nasdaq common stocks, a broad U.S. market benchmark including dividends.", url: "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html" },
     EM:  { desc: "A basket of stocks from emerging-market economies such as China, India, and Brazil, tracked here via a liquid ETF proxy.", url: "https://finance.yahoo.com/quote/EEM" },
@@ -1005,6 +1357,7 @@
     if (active === 'growth') renderGrowth();
     else if (active === 'rolling') renderRolling();
     else if (active === 'corr') renderCorr();
+    else if (active === 'sim') renderSim();
     else renderPattern();
   }
 
@@ -1013,9 +1366,10 @@
     if (!btn) return;
     document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
     btn.classList.add('active');
-    ['growth','rolling','corr','pattern'].forEach(function(name){
+    ['growth','rolling','corr','pattern','sim'].forEach(function(name){
       document.getElementById('panel-'+name).classList.toggle('hidden', name !== btn.getAttribute('data-tab'));
     });
+    document.getElementById('legend').classList.toggle('hidden', btn.getAttribute('data-tab') === 'sim');
     renderAll();
   });
 
@@ -1024,6 +1378,7 @@
   initRangeSlider();
   initRollSlider();
   initFocusDropdown();
+  initSim();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
     renderAll();
