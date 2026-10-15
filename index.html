@@ -70,6 +70,8 @@
   .window-slider{display:flex; align-items:center; gap:10px; margin:0 0 16px; font-size:.78rem; color:var(--muted);}
   .window-slider input[type=range]{flex:1; accent-color:var(--accent); cursor:pointer;}
   .window-slider strong{color:var(--ink);}
+  .window-slider select{background:var(--card); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:.78rem; font-family:inherit; cursor:pointer;}
+  .band-caption{font-style:italic;}
   .chart{width:100%; height:260px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:relative;}
   .chart svg{width:100%; height:100%; display:block; overflow:visible;}
   .axis-label{font-size:9px; fill:var(--muted);}
@@ -128,6 +130,10 @@
       <input type="checkbox" id="monthly-toggle">
       <span>Show monthly (not annualized) return statistics in the tiles</span>
     </label>
+    <label class="excess-toggle">
+      <input type="checkbox" id="simple-toggle">
+      <span>Use simple (non-log) returns for vol, the rolling charts, the histogram, and the tiles</span>
+    </label>
   </section>
 
   <section class="tiles" id="tiles"></section>
@@ -149,15 +155,20 @@
   <section class="panel hidden" id="panel-rolling">
     <div class="window-slider">
       <span>Rolling window:</span>
-      <input type="range" id="roll-window" min="1" max="60" value="12">
-      <span><strong class="roll-window-val">12</strong> months</span>
+      <input type="range" id="roll-window" min="1" max="240" value="120">
+      <span id="roll-window-label"></span>
     </div>
-    <h2>Rolling <span class="roll-window-val">12</span>-month return</h2>
+    <div class="window-slider">
+      <span>Focus on one series:</span>
+      <select id="focus-series"></select>
+    </div>
+    <h2>Rolling <span class="roll-window-val">120</span>-month annualized return</h2>
     <div class="chart" id="chart-rolling"></div>
-    <p class="cap">Trailing <span class="roll-window-val">12</span>-month compounded return, recalculated each month, over the selected date range. Wide dispersion between lines in the same month shows how differently these exposures behaved over the same period.<span id="note-rolling"></span></p>
-    <h2>Rolling <span class="roll-window-val">12</span>-month volatility</h2>
+    <p class="cap">Annualized mean log return over the trailing <span class="roll-window-val">120</span> months — (12/w) times the sum of the last w monthly log returns — recalculated each month, over the selected date range. In single-series mode, the shaded band is a &plusmn;1.96 SE (95%) confidence interval for that window length, and the dashed line is the full-sample estimate over the selected date range.<span id="note-rolling"></span></p>
+    <h2>Rolling <span class="roll-window-val">120</span>-month annualized volatility</h2>
     <div class="chart" id="chart-rolling-vol"></div>
-    <p class="cap">Annualized standard deviation of monthly returns over the trailing <span class="roll-window-val">12</span> months, recalculated each month. Try shortening the window above: returns swing wildly while volatility stays comparatively stable — a reminder that risk is far more predictable than return.<span id="note-rolling-vol"></span></p>
+    <p class="cap">Annualized standard deviation of monthly returns over the trailing <span class="roll-window-val">120</span> months, recalculated each month. Try shortening the window above: returns swing wildly while volatility stays comparatively stable — a reminder that risk is far more predictable than return.<span id="note-rolling-vol"></span></p>
+    <p class="cap band-caption" id="rolling-bands-caption" hidden>Both estimates use the same data. The mean's uncertainty depends on how many years you have; the vol's depends on how many observations.</p>
   </section>
 
   <section class="panel hidden" id="panel-corr">
@@ -228,6 +239,8 @@
   }
   var excessMode = false;
   var monthlyMode = false;
+  var logMode = true;
+  var focusSeries = 'SPX';
   var RF_MAP = {};
   Object.keys(DATA.riskfree.data).forEach(function(mk){ RF_MAP[monthKeyToDate(mk).getTime()] = DATA.riskfree.data[mk]; });
   function effectivePoints(key){
@@ -249,25 +262,34 @@
     for (var i=0;i<pts.length;i++){ nav *= (1+pts[i].r); out.push({d:pts[i].d, v:nav}); }
     return out;
   }
-  function rollingSeries(key, win){
-    win = win || 12;
-    var pts = effectivePoints(key), out = [];
-    for (var i=win-1;i<pts.length;i++){
-      var nav = 1;
-      for (var j=i-win+1;j<=i;j++) nav *= (1+pts[j].r);
-      out.push({d:pts[i].d, v: nav-1});
-    }
-    return out;
-  }
-  function rollingVolSeries(key, win){
+  // Rolling annualized mean (log or simple, per logMode) and vol, plus the standard errors
+  // of each estimate for the current window length w: SE(mean,ann.) = sigma_ann / sqrt(w/12);
+  // SE(vol,ann.) ~= sigma_ann / sqrt(2*(w-1)).
+  function rollingStatsSeries(key, win){
     win = win || 12;
     var pts = effectivePoints(key), out = [];
     for (var i=win-1;i<pts.length;i++){
       var slice = [];
-      for (var j=i-win+1;j<=i;j++) slice.push(pts[j].r);
-      out.push({d:pts[i].d, v: stdev(slice) * Math.sqrt(12)});
+      for (var j=i-win+1;j<=i;j++) slice.push(logMode ? Math.log(1+pts[j].r) : pts[j].r);
+      var m = slice.reduce(function(a,b){return a+b;},0) / win;
+      var sd = stdev(slice);
+      var meanAnn = m * 12;
+      var volAnn = sd * Math.sqrt(12);
+      out.push({
+        d: pts[i].d,
+        mean: meanAnn,
+        vol: volAnn,
+        seMean: volAnn / Math.sqrt(win/12),
+        seVol: win > 1 ? volAnn / Math.sqrt(2*(win-1)) : 0
+      });
     }
     return out;
+  }
+  function rollingSeries(key, win){
+    return rollingStatsSeries(key, win).map(function(p){ return {d:p.d, v:p.mean}; });
+  }
+  function rollingVolSeries(key, win){
+    return rollingStatsSeries(key, win).map(function(p){ return {d:p.d, v:p.vol}; });
   }
   function stdev(arr){
     var n = arr.length; if(n<2) return 0;
@@ -286,27 +308,43 @@
 
   // n monthly returns span n/12 years (not the calendar gap between the first and last
   // month, which is (n-1)/12 and overstates annualized figures on short windows).
+  // Geometric mean and max drawdown always compound the actual (simple) monthly returns —
+  // the wealth path — regardless of logMode; every other moment (mean, vol, SE, t-stat,
+  // Sharpe, years-to-significance) is computed on log or simple monthly returns per logMode.
   function statsForPoints(pts, winStart, winEnd){
     pts = pts.filter(function(p){ return p.d.getTime() >= winStart && p.d.getTime() <= winEnd; });
     if (pts.length < 2) return null;
-    var rets = pts.map(function(p){return p.r;});
     var n = pts.length;
     var nav = 1, cum = [];
     pts.forEach(function(p){ nav *= (1+p.r); cum.push({d:p.d, v:nav}); });
-    var cagrM = Math.pow(nav, 1/n) - 1;          // monthly geometric mean
-    var cagr = Math.pow(1+cagrM, 12) - 1;         // annualized geometric mean
-    var ccM = Math.log(nav) / n;                  // monthly arithmetic mean of log returns
-    var cc = ccM * 12;                            // annualized arithmetic mean of log returns
-    var sd = stdev(rets);
-    var volM = sd;
-    var vol = sd * Math.sqrt(12);
-    var mean = rets.reduce(function(a,b){return a+b;},0) / n;
-    var sharpeM = volM > 0 ? mean / volM : 0;
-    var sharpe = vol > 0 ? (mean*12) / vol : 0;
-    var tstat = sd > 0 ? mean / (sd / Math.sqrt(n)) : 0;
+    var cagrM = Math.pow(nav, 1/n) - 1;           // monthly geometric mean (wealth path)
+    var cagr = Math.pow(1+cagrM, 12) - 1;          // annualized geometric mean (wealth path)
     var peak = -Infinity, maxDd = 0;
     cum.forEach(function(p){ peak = Math.max(peak, p.v); maxDd = Math.min(maxDd, p.v/peak - 1); });
-    return { cagr: cagr, cc: cc, vol: vol, sharpe: sharpe, cagrM: cagrM, ccM: ccM, volM: volM, sharpeM: sharpeM, maxDd: maxDd, tstat: tstat, start: pts[0].d, end: pts[pts.length-1].d };
+
+    var moment = pts.map(function(p){ return logMode ? Math.log(1+p.r) : p.r; });
+    var meanM = moment.reduce(function(a,b){return a+b;},0) / n;
+    var mean = meanM * 12;                         // annualized arithmetic mean (log or simple)
+    var sd = stdev(moment);
+    var volM = sd;
+    var vol = sd * Math.sqrt(12);
+    var years = n / 12;
+    var seMeanM = sd / Math.sqrt(n);
+    var seMean = vol / Math.sqrt(years);           // SE(mean, ann.) = sigma_ann / sqrt(Y)
+    var seVolM = n > 1 ? sd / Math.sqrt(2*(n-1)) : 0;
+    var seVol = n > 1 ? vol / Math.sqrt(2*(n-1)) : 0;  // SE(vol, ann.) ~= sigma_ann / sqrt(2(n-1))
+    var sharpeM = volM > 0 ? meanM / volM : 0;
+    var sharpe = vol > 0 ? mean / vol : 0;
+    var tstat = sd > 0 ? meanM / (sd / Math.sqrt(n)) : 0;
+    var yStar = mean !== 0 ? Math.min(999, Math.pow(1.96 * vol / mean, 2)) : 999;  // years needed for a significant mean
+
+    return {
+      cagr: cagr, cagrM: cagrM, maxDd: maxDd,
+      mean: mean, meanM: meanM, vol: vol, volM: volM,
+      seMean: seMean, seMeanM: seMeanM, seVol: seVol, seVolM: seVolM,
+      sharpe: sharpe, sharpeM: sharpeM, tstat: tstat, yStar: yStar,
+      start: pts[0].d, end: pts[pts.length-1].d
+    };
   }
   function windowedStats(key, winStart, winEnd){
     return statsForPoints(effectivePoints(key), winStart, winEnd);
@@ -318,15 +356,19 @@
       return '<div class="k" style="color:'+color+'">'+label+'</div>' +
         '<div class="sub">No data in this window</div>';
     }
-    var meanV = monthlyMode ? fmtPct(s.ccM, 2) : fmtPct(s.cc);
+    var meanV = monthlyMode ? fmtPct(s.meanM, 2) : fmtPct(s.mean);
     var geoV = monthlyMode ? fmtPct(s.cagrM, 2) : fmtPct(s.cagr);
     var volV = monthlyMode ? fmtPct(s.volM, 2) : fmtPct(s.vol);
+    var seMeanV = monthlyMode ? fmtPct(s.seMeanM, 2) : fmtPct(s.seMean);
+    var seVolV = monthlyMode ? fmtPct(s.seVolM, 2) : fmtPct(s.seVol);
     var sharpeV = monthlyMode ? s.sharpeM : s.sharpe;
+    var momentWord = logMode ? 'log' : 'simple';
     return '<div class="k" style="color:'+color+'">'+label+'</div>' +
-      '<div class="v">'+meanV+' / '+geoV+'</div>' +
-      '<div class="sub" style="margin-top:-4px;">arithmetic mean (log) / geometric mean</div>' +
-      '<div class="sub">Vol '+volV+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
+      '<div class="v">'+meanV+' &plusmn;'+seMeanV+' / '+geoV+'</div>' +
+      '<div class="sub" style="margin-top:-4px;">arithmetic mean ('+momentWord+') &plusmn;1.96 SE / geometric mean</div>' +
+      '<div class="sub">Vol '+volV+' &plusmn;'+seVolV+' &middot; Max DD '+fmtPct(s.maxDd)+'</div>' +
       (showSharpe && excessMode ? '<div class="sub">Sharpe '+sharpeV.toFixed(2)+' &middot; t-stat '+s.tstat.toFixed(1)+'</div>' : '') +
+      '<div class="sub">Y* for significant mean &asymp; '+Math.round(s.yStar)+' years</div>' +
       '<div class="sub">'+fmtDate(s.start)+' – '+fmtDate(s.end)+'</div>';
   }
   function renderTiles(winStart, winEnd){
@@ -385,18 +427,24 @@
 
     var allPts = [];
     seriesList.forEach(function(s){ allPts = allPts.concat(s.points); });
+    (opts.bands || []).forEach(function(b){ allPts = allPts.concat(b.upper).concat(b.lower); });
     if (allPts.length === 0){ container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No series selected</div>'; return; }
 
     var xMin = Math.min.apply(null, allPts.map(function(p){return p.d.getTime();}));
     var xMax = Math.max.apply(null, allPts.map(function(p){return p.d.getTime();}));
-    var yVals = allPts.map(function(p){return p.v;});
-    var yMin = Math.min.apply(null, yVals), yMax = Math.max.apply(null, yVals);
     var logScale = !!opts.log;
-    if (logScale){ yMin = Math.max(yMin, 1e-6); }
-    if (yMin === yMax){ yMin -= 1; yMax += 1; }
-    var yPad = (yMax - yMin) * 0.08;
-    var yLo = logScale ? yMin*0.9 : yMin - yPad;
-    var yHi = logScale ? yMax*1.1 : yMax + yPad;
+    var yLo, yHi;
+    if (opts.yMin != null && opts.yMax != null){
+      yLo = opts.yMin; yHi = opts.yMax;
+    } else {
+      var yVals = allPts.map(function(p){return p.v;});
+      var yMin = Math.min.apply(null, yVals), yMax = Math.max.apply(null, yVals);
+      if (logScale){ yMin = Math.max(yMin, 1e-6); }
+      if (yMin === yMax){ yMin -= 1; yMax += 1; }
+      var yPad = (yMax - yMin) * 0.08;
+      yLo = logScale ? yMin*0.9 : yMin - yPad;
+      yHi = logScale ? yMax*1.1 : yMax + yPad;
+    }
 
     function xPix(t){ return padL + (t - xMin) / (xMax - xMin) * plotW; }
     function yPix(v){
@@ -453,6 +501,20 @@
       svg.appendChild(zl);
     }
 
+    // shaded +/-1.96 SE confidence bands (single-series rolling mode)
+    (opts.bands || []).forEach(function(b){
+      if (!b.upper.length) return;
+      var outline = b.upper.map(function(p,i){ return (i===0?'M':'L') + xPix(p.d.getTime()).toFixed(1) + ',' + yPix(p.v).toFixed(2); })
+        .concat(b.lower.slice().reverse().map(function(p){ return 'L' + xPix(p.d.getTime()).toFixed(1) + ',' + yPix(p.v).toFixed(2); }))
+        .join(' ') + ' Z';
+      var band = document.createElementNS(svgNS,'path');
+      band.setAttribute('d', outline);
+      band.setAttribute('fill', b.color);
+      band.setAttribute('fill-opacity', '0.16');
+      band.setAttribute('stroke', 'none');
+      svg.appendChild(band);
+    });
+
     seriesList.forEach(function(s){
       var d = s.points.map(function(p,i){ return (i===0?'M':'L') + xPix(p.d.getTime()).toFixed(1) + ',' + yPix(p.v).toFixed(2); }).join(' ');
       var path = document.createElementNS(svgNS,'path');
@@ -460,6 +522,18 @@
       path.setAttribute('class','series-path');
       path.setAttribute('stroke', s.color);
       svg.appendChild(path);
+    });
+
+    // dashed full-sample reference line (single-series rolling mode)
+    (opts.refLines || []).forEach(function(rl){
+      var ry = yPix(rl.value);
+      var rline = document.createElementNS(svgNS,'line');
+      rline.setAttribute('x1', padL); rline.setAttribute('x2', W-padR);
+      rline.setAttribute('y1', ry); rline.setAttribute('y2', ry);
+      rline.setAttribute('stroke', rl.color || 'var(--ink)');
+      rline.setAttribute('stroke-width', '1.4');
+      rline.setAttribute('stroke-dasharray', '5,4');
+      svg.appendChild(rline);
     });
 
     // hover
@@ -596,9 +670,12 @@
     renderLineChart('chart-growth', series, { log:true, yFormat: function(v){ return v.toFixed(0); }, tooltipFormat: function(v){ return v.toFixed(1); } });
   }
 
-  var rollWindow = 12;
+  var rollWindow = 120;
   function updateRollLabels(){
     document.querySelectorAll('.roll-window-val').forEach(function(el){ el.textContent = rollWindow; });
+    var years = rollWindow / 12;
+    var lbl = document.getElementById('roll-window-label');
+    if (lbl) lbl.innerHTML = '<strong>' + years.toFixed(1) + '</strong> years (' + rollWindow + ' month' + (rollWindow===1?'':'s') + ')';
   }
   function initRollSlider(){
     var input = document.getElementById('roll-window');
@@ -610,21 +687,74 @@
       renderAll();
     });
   }
+  function initFocusDropdown(){
+    var sel = document.getElementById('focus-series');
+    sel.innerHTML = '<option value="ALL">All series (legend selection, no bands)</option>' +
+      ORDER.map(function(k){ return '<option value="'+k+'">'+DATA.series[k].label+'</option>'; }).join('');
+    sel.value = focusSeries;
+    sel.addEventListener('change', function(){
+      focusSeries = sel.value;
+      renderAll();
+    });
+  }
+
+  // Combined y-domain across both rolling charts (and any bands), so the mean and vol
+  // charts share one pixel-per-percentage-point scale and band widths are visually comparable.
+  function sharedYDomain(pointArraysList){
+    var vals = [];
+    pointArraysList.forEach(function(arr){ arr.forEach(function(p){ vals.push(p.v); }); });
+    if (!vals.length) return { lo:-0.1, hi:0.1 };
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (lo === hi){ lo -= 0.05; hi += 0.05; }
+    var pad = (hi - lo) * 0.08;
+    return { lo: lo - pad, hi: hi + pad };
+  }
 
   function renderRolling(){
-    var keys = visibleKeys();
     var win = windowBounds();
-    var series = keys.map(function(k){
-      var pts = rollingSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
-      return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
-    });
-    renderLineChart('chart-rolling', series, { log:false, yFormat: function(v){ return fmtPct(v,0); }, tooltipFormat: function(v){ return fmtPct(v,1); } });
+    var bandsCaption = document.getElementById('rolling-bands-caption');
+    var pctFmt0 = function(v){ return fmtPct(v,0); };
+    var pctFmt1 = function(v){ return fmtPct(v,1); };
 
-    var volSeries = keys.map(function(k){
-      var pts = rollingVolSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
-      return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
-    });
-    renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: function(v){ return fmtPct(v,0); }, tooltipFormat: function(v){ return fmtPct(v,1); } });
+    if (focusSeries === 'ALL'){
+      bandsCaption.hidden = true;
+      var keys = visibleKeys();
+      var meanSeries = keys.map(function(k){
+        var pts = rollingSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
+      });
+      var volSeries = keys.map(function(k){
+        var pts = rollingVolSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
+      });
+      var dom = sharedYDomain(meanSeries.concat(volSeries).map(function(s){ return s.points; }));
+      renderLineChart('chart-rolling', meanSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.lo, yMax: dom.hi });
+      renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.lo, yMax: dom.hi });
+    } else {
+      var key = focusSeries;
+      var stats = rollingStatsSeries(key, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+      var full = windowedStats(key, win.start, win.end);
+      var meanPts = stats.map(function(p){ return {d:p.d, v:p.mean}; });
+      var volPts = stats.map(function(p){ return {d:p.d, v:p.vol}; });
+      var meanUpper = stats.map(function(p){ return {d:p.d, v:p.mean + 1.96*p.seMean}; });
+      var meanLower = stats.map(function(p){ return {d:p.d, v:p.mean - 1.96*p.seMean}; });
+      var volUpper = stats.map(function(p){ return {d:p.d, v:p.vol + 1.96*p.seVol}; });
+      var volLower = stats.map(function(p){ return {d:p.d, v:p.vol - 1.96*p.seVol}; });
+      var color = COLORS[key];
+      bandsCaption.hidden = stats.length === 0;
+
+      var dom2 = sharedYDomain([meanPts, volPts, meanUpper, meanLower, volUpper, volLower]);
+      renderLineChart('chart-rolling', [{ key:key, label:DATA.series[key].label, color:color, points: meanPts }], {
+        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.lo, yMax: dom2.hi,
+        bands: [{ upper: meanUpper, lower: meanLower, color: color }],
+        refLines: full ? [{ value: full.mean, color: color }] : []
+      });
+      renderLineChart('chart-rolling-vol', [{ key:key, label:DATA.series[key].label, color:color, points: volPts }], {
+        log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom2.lo, yMax: dom2.hi,
+        bands: [{ upper: volUpper, lower: volLower, color: color }],
+        refLines: full ? [{ value: full.vol, color: color }] : []
+      });
+    }
   }
 
   function pearson(xs, ys){
@@ -685,11 +815,12 @@
     var binCount = 30;
     var binWidth = (rMax - rMin) / binCount;
 
-    // Histogram bars are drawn per series currently checked in the legend.
+    // Histogram bars are drawn per series currently checked in the legend. Bins log monthly
+    // returns by default (logMode) or simple monthly returns when the simple-returns toggle is on.
     var allStats = ORDER.map(function(k){
       var rets = effectivePoints(k)
         .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
-        .map(function(p){ return p.r; });
+        .map(function(p){ return logMode ? Math.log(1+p.r) : p.r; });
       if (rets.length < 5) return null;
       return { key:k, color: COLORS[k], rets: rets };
     }).filter(Boolean);
@@ -828,14 +959,23 @@
       : ' Shown as total returns for every series \u2014 Value, BAB, and QMJ include the 1-month T-bill rate on top of their long/short spread (a fully collateralized return), matching the basis of the indices, Momentum, and Bonds.';
   }
 
+  function momentNote(){
+    return logMode
+      ? ' Vol, the rolling charts, the histogram, and the tile statistics are computed on monthly log returns \u2014 switch to simple returns above to use discrete percentage changes instead.'
+      : ' Vol, the rolling charts, the histogram, and the tile statistics are computed on monthly simple (discrete) returns \u2014 switch back to log returns above for the default basis.';
+  }
+
   function renderAll(){
     var win = windowBounds();
     renderTiles(win.start, win.end);
     renderLegend();
     var note = basisNote();
-    ['note-growth','note-rolling','note-rolling-vol','note-corr','note-pattern'].forEach(function(id){
+    var noteWithMoment = note + momentNote();
+    document.getElementById('note-growth').textContent = note;
+    document.getElementById('note-corr').textContent = note;
+    ['note-rolling','note-rolling-vol','note-pattern'].forEach(function(id){
       var el = document.getElementById(id);
-      if (el) el.textContent = note;
+      if (el) el.textContent = noteWithMoment;
     });
     var active = document.querySelector('.tab.active').getAttribute('data-tab');
     if (active === 'growth') renderGrowth();
@@ -859,12 +999,17 @@
   renderSources();
   initRangeSlider();
   initRollSlider();
+  initFocusDropdown();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
     renderAll();
   });
   document.getElementById('monthly-toggle').addEventListener('change', function(e){
     monthlyMode = e.target.checked;
+    renderAll();
+  });
+  document.getElementById('simple-toggle').addEventListener('change', function(e){
+    logMode = !e.target.checked;
     renderAll();
   });
   applyTheme(localStorage.getItem('eq-dash-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
