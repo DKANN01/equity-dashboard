@@ -89,7 +89,9 @@
   .sim-outputs h2{margin-top:6px;}
   .sim-outputs .cap{margin-bottom:14px;}
   .sim-legend{display:flex; flex-wrap:wrap; gap:12px; font-size:.72rem; color:var(--muted); margin:6px 0 0;}
-  @media (max-width:760px){ .sim-grid{grid-template-columns:1fr;} }
+  .acf-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .acf-grid h2{margin-top:6px; font-size:.95rem;}
+  @media (max-width:760px){ .sim-grid,.acf-grid{grid-template-columns:1fr;} }
   .chart{width:100%; height:260px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:relative;}
   .chart svg{width:100%; height:100%; display:block; overflow:visible;}
   .axis-label{font-size:9px; fill:var(--muted);}
@@ -161,6 +163,7 @@
     <button class="tab" data-tab="rolling" type="button">Rolling Returns and Volatility</button>
     <button class="tab" data-tab="corr" type="button">Correlation</button>
     <button class="tab" data-tab="pattern" type="button">Return Pattern</button>
+    <button class="tab" data-tab="acf" type="button">Autocorrelation</button>
     <button class="tab" data-tab="sim" type="button">Simulation</button>
   </nav>
 
@@ -214,6 +217,30 @@
     <h2>Tail counts</h2>
     <div id="pattern-tails"></div>
     <p class="cap">For each k, the number of months with |z| &gt; k, next to the count a normal distribution predicts, 2T&Phi;(&minus;k), and how often the normal model says such a month should occur. A series with fat tails shows many more extreme months than the normal expects, and the gap widens as k grows. Recomputes with the date range and the legend selection.</p>
+  </section>
+
+  <section class="panel hidden" id="panel-acf">
+    <div class="window-slider">
+      <span>Series:</span>
+      <select id="acf-series"></select>
+    </div>
+    <div class="window-slider">
+      <span>Return frequency:</span>
+      <select class="freq-select"><option value="M">Monthly</option><option value="W">Weekly</option><option value="D">Daily</option></select>
+      <span>lags: 24 monthly, 52 weekly, 100 daily</span>
+    </div>
+    <div class="acf-grid">
+      <div>
+        <h2>Autocorrelation of returns, r</h2>
+        <div class="chart" id="acf-r" style="height:240px;"></div>
+      </div>
+      <div>
+        <h2>Autocorrelation of absolute returns, |r|</h2>
+        <div class="chart" id="acf-abs" style="height:240px;"></div>
+      </div>
+    </div>
+    <p class="cap" id="acf-readout" style="font-size:.8rem;"></p>
+    <p class="cap">Bars are the sample autocorrelation at each lag; the shaded band is &plusmn;1.96/&radic;T, where about 95% of bars would fall if the series were unpredictable noise. Both charts share one scale. Returns sit inside the band: the direction of next period&rsquo;s return cannot be predicted from this period&rsquo;s. Absolute returns sit far above it and decay slowly: big moves follow big moves and quiet follows quiet, which is volatility clustering. Computed on log returns by default (see the log/simple toggle) over the selected date range.<span id="note-acf"></span></p>
   </section>
 
   <section class="panel hidden" id="panel-sim">
@@ -1104,6 +1131,59 @@
     el.innerHTML = html + '</table>';
   }
 
+  // ---------- autocorrelation (Facts 4 and 5) ----------
+  var acfKey = 'SPX';
+  function acfOf(x, L){
+    var n = x.length, m = 0, i;
+    for (i = 0; i < n; i++) m += x[i];
+    m /= n;
+    var den = 0;
+    for (i = 0; i < n; i++) den += (x[i] - m) * (x[i] - m);
+    var out = [];
+    for (var k = 1; k <= L; k++){
+      var num = 0;
+      for (var t = k; t < n; t++) num += (x[t] - m) * (x[t-k] - m);
+      out.push(num / den);
+    }
+    return out;
+  }
+  function renderACF(){
+    var readout = document.getElementById('acf-readout');
+    var win = windowBounds();
+    var L = freq === 'D' ? 100 : (freq === 'W' ? 52 : 24);
+    var xs = freqPoints(acfKey).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+      .map(function(p){ return logMode ? Math.log(1 + p.r) : p.r; });
+    if (xs.length < L + 10){
+      ['acf-r','acf-abs'].forEach(function(id){ document.getElementById(id).innerHTML = ''; });
+      readout.textContent = hasFreqData(acfKey) ? 'Not enough ' + freqWord() + ' observations in the selected date range for ' + L + ' lags.' : DATA.series[acfKey].label + ' has no daily source, so it is available at monthly frequency only.';
+      return;
+    }
+    var T = xs.length, band = 1.96 / Math.sqrt(T);
+    var rAcf = acfOf(xs, L), aAcf = acfOf(xs.map(Math.abs), L);
+    var peak = band;
+    rAcf.concat(aAcf).forEach(function(v){ if (Math.abs(v) > peak) peak = Math.abs(v); });
+    var yMax = Math.ceil(peak * 1.15 * 20) / 20, color = COLORS[acfKey];
+    var xt = []; for (var k = 0; k <= L; k += (L <= 24 ? 4 : (L <= 52 ? 13 : 20))) xt.push(k);
+    function draw(id, vals){
+      renderXY(id, {
+        xMin: 0, xMax: L + 1, xTicks: xt, xFmt: function(x){ return x; },
+        yMin: -yMax, yMax: yMax, yFmt: function(v){ return v.toFixed(2); },
+        bands: [{ upper: [{x:0,y:band},{x:L+1,y:band}], lower: [{x:0,y:-band},{x:L+1,y:-band}], color: 'var(--muted)', opacity: .18 }],
+        lines: [{ pts: [{x:0,y:band},{x:L+1,y:band}], color: 'var(--muted)', width: 1, dash: '4,3' }, { pts: [{x:0,y:-band},{x:L+1,y:-band}], color: 'var(--muted)', width: 1, dash: '4,3' }],
+        bars: vals.map(function(v, i){ return { x0: i + 0.5, x1: i + 1.5, y: v, color: color, opacity: .75 }; })
+      });
+    }
+    draw('acf-r', rAcf); draw('acf-abs', aAcf);
+    function outside(vals){ return vals.filter(function(v){ return Math.abs(v) > band; }).length; }
+    readout.innerHTML = '<strong>' + DATA.series[acfKey].label + '</strong>, ' + freqWord() + ' data, T = ' + T.toLocaleString() + ', band &plusmn;' + band.toFixed(3) + '. Lags outside the band: <strong>' + outside(rAcf) + ' of ' + L + '</strong> for r (about ' + (0.05 * L).toFixed(1) + ' expected by chance) vs. <strong>' + outside(aAcf) + ' of ' + L + '</strong> for |r|. First-lag autocorrelation: r = ' + rAcf[0].toFixed(3) + ', |r| = ' + aAcf[0].toFixed(3) + '.';
+  }
+  function initACF(){
+    var sel = document.getElementById('acf-series');
+    sel.innerHTML = ORDER.map(function(k){ return '<option value="'+k+'">'+DATA.series[k].label+'</option>'; }).join('');
+    sel.value = acfKey;
+    sel.addEventListener('change', function(){ acfKey = sel.value; renderAll(); });
+  }
+
   // ---------- simulation tab (Lecture 8) ----------
   var sim = { key:'SPX', mu:0.07, sigma:0.18, w0:100, horizon:20, spend:0, contrib:0, paths:10000, seed:12345, logY:false, err:'none', estSig:null, est:null, zKey:null, Z:null };
 
@@ -1205,7 +1285,7 @@
     });
     (cfg.bars || []).forEach(function(b){
       var yT = yPix(b.y), yB = yPix(yLo > 0 ? yLo : 0);
-      el('rect', { x: xPix(b.x0), width: Math.max(1, xPix(b.x1) - xPix(b.x0) - 1), y: yT, height: Math.max(0, yB - yT), fill: b.color, opacity: b.opacity || .5 });
+      el('rect', { x: xPix(b.x0), width: Math.max(1, xPix(b.x1) - xPix(b.x0) - 1), y: Math.min(yT, yB), height: Math.abs(yB - yT), fill: b.color, opacity: b.opacity || .5 });
     });
     (cfg.bands || []).forEach(function(b){
       var d = b.upper.map(function(p,i){ return (i ? 'L' : 'M') + xPix(p.x).toFixed(1) + ',' + yPix(p.y).toFixed(1); })
@@ -1436,12 +1516,13 @@
     var noteWithMoment = note + momentNote();
     document.getElementById('note-growth').textContent = note;
     document.getElementById('note-corr').textContent = note;
-    ['note-rolling','note-rolling-vol','note-pattern'].forEach(function(id){
+    ['note-rolling','note-rolling-vol','note-pattern','note-acf'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.textContent = noteWithMoment;
     });
     var active = document.querySelector('.tab.active').getAttribute('data-tab');
     document.querySelectorAll('.freq-select').forEach(function(sel){ sel.value = freq; });
+    Array.prototype.forEach.call(document.getElementById('acf-series').options, function(o){ o.disabled = !hasFreqData(o.value); });
     Array.prototype.forEach.call(document.getElementById('focus-series').options, function(o){
       o.disabled = o.value !== 'ALL' && !hasFreqData(o.value);
     });
@@ -1449,6 +1530,7 @@
     else if (active === 'rolling') renderRolling();
     else if (active === 'corr') renderCorr();
     else if (active === 'sim') renderSim();
+    else if (active === 'acf') renderACF();
     else renderPattern();
   }
 
@@ -1457,10 +1539,10 @@
     if (!btn) return;
     document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
     btn.classList.add('active');
-    ['growth','rolling','corr','pattern','sim'].forEach(function(name){
+    ['growth','rolling','corr','pattern','acf','sim'].forEach(function(name){
       document.getElementById('panel-'+name).classList.toggle('hidden', name !== btn.getAttribute('data-tab'));
     });
-    document.getElementById('legend').classList.toggle('hidden', btn.getAttribute('data-tab') === 'sim');
+    document.getElementById('legend').classList.toggle('hidden', btn.getAttribute('data-tab') === 'sim' || btn.getAttribute('data-tab') === 'acf');
     renderAll();
   });
 
@@ -1470,6 +1552,7 @@
   initRollSlider();
   initFocusDropdown();
   initFreq();
+  initACF();
   initSim();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
