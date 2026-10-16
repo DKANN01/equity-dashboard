@@ -178,6 +178,11 @@
       <span id="roll-window-label"></span>
     </div>
     <div class="window-slider">
+      <span>Return frequency:</span>
+      <select class="freq-select"><option value="M">Monthly</option><option value="W">Weekly</option><option value="D">Daily</option></select>
+      <span>calendar window held fixed; weekly and daily series are built from daily data</span>
+    </div>
+    <div class="window-slider">
       <span>Focus on one series:</span>
       <select id="focus-series"></select>
     </div>
@@ -187,6 +192,7 @@
     <h2>Rolling <span class="roll-window-val">120</span>-month annualized volatility</h2>
     <div class="chart" id="chart-rolling-vol"></div>
     <p class="cap">Annualized standard deviation of monthly returns over the trailing <span class="roll-window-val">120</span> months, recalculated each month. Try shortening the window above: returns swing wildly while volatility stays comparatively stable — a reminder that risk is far more predictable than return.<span id="note-rolling-vol"></span></p>
+    <p class="cap" id="rolling-ci" hidden></p>
     <p class="cap band-caption" id="rolling-bands-caption" hidden>Both estimates use the same data. The mean's uncertainty depends on how many years you have; the vol's depends on how many observations.</p>
   </section>
 
@@ -197,9 +203,17 @@
   </section>
 
   <section class="panel hidden" id="panel-pattern">
-    <h2>Distribution of monthly returns</h2>
+    <div class="window-slider">
+      <span>Return frequency:</span>
+      <select class="freq-select"><option value="M">Monthly</option><option value="W">Weekly</option><option value="D">Daily</option></select>
+      <span>calendar window held fixed; weekly and daily series are built from daily data</span>
+    </div>
+    <h2>Distribution of standardized <span class="pattern-freq-word">monthly</span> returns (z-scores)</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
-    <p class="cap">The dark dashed line is a single reference normal distribution, centered at 0% with the standard deviation of the pooled monthly returns of all eight series over the selected date range, and is always shown. Check a series in the legend above to overlay its actual histogram of monthly returns plus its own fitted normal curve (same color, dashed) — where either departs from the reference curve (fatter tails, skew, or a center away from 0%), real returns are departing from the normal-distribution assumption used in most risk models. X-axis fixed to &plusmn;30% so it's comparable across series and windows.<span id="note-pattern"></span></p>
+    <p class="cap">Each checked series is standardized by its own mean and standard deviation over the selected date range, so a z-score of 3 means &ldquo;three of that series&rsquo; own standard deviations from its mean&rdquo;. The dashed curve is a single N(0,1) normal. Because every series is on the same scale, departures from the curve measure fat tails and skew, not differences in volatility. The x-axis is fixed at &plusmn;6; z-scores beyond it pile into the end bins.<span id="note-pattern"></span></p>
+    <h2>Tail counts</h2>
+    <div id="pattern-tails"></div>
+    <p class="cap">For each k, the number of months with |z| &gt; k, next to the count a normal distribution predicts, 2T&Phi;(&minus;k), and how often the normal model says such a month should occur. A series with fat tails shows many more extreme months than the normal expects, and the gap widens as k grows. Recomputes with the date range and the legend selection.</p>
   </section>
 
   <section class="panel hidden" id="panel-sim">
@@ -320,30 +334,105 @@
       return isSpread ? { d: p.d, r: p.r + rf } : p;
     });
   }
+  // ---------- daily / weekly series (feed only the Return Pattern and Rolling tabs) ----------
+  var freq = 'M';   // 'M' monthly (published series), 'W' weekly, 'D' daily
+  function periodsPerYear(){ return freq === 'D' ? 252 : (freq === 'W' ? 52 : 12); }
+  function freqWord(){ return freq === 'D' ? 'daily' : (freq === 'W' ? 'weekly' : 'monthly'); }
+  var DAILY = (function(){
+    var out = {};
+    if (!DATA.daily) return out;
+    var d = DATA.daily, t = Date.UTC(+d.start.slice(0,4), +d.start.slice(5,7) - 1, +d.start.slice(8,10));
+    var cal = new Array(d.gaps.length);
+    for (var i = 0; i < cal.length; i++){ t += d.gaps[i] * 86400000; cal[i] = t; }
+    Object.keys(d.series).forEach(function(k){
+      var sr = d.series[k], pts = [];
+      for (var j = 0; j < sr.values.length; j++){
+        if (sr.values[j] == null) continue;
+        pts.push({ t: cal[sr.first + j], r: sr.values[j] * d.scale });
+      }
+      out[k] = pts;
+    });
+    return out;
+  })();
+  var DAILY_RF = {};
+  (DAILY.RF || []).forEach(function(p){ DAILY_RF[p.t] = p.r; });
+  function hasFreqData(key){ return freq === 'M' || !!DAILY[key]; }
+  var fpCache = {};
+  // Returns in the active frequency on the active total/excess basis. Weekly and monthly-from-daily
+  // returns are built by summing daily log returns inside each calendar week.
+  function freqPoints(key){
+    if (freq === 'M') return effectivePoints(key);
+    var raw = DAILY[key];
+    if (!raw) return [];
+    var ck = key + '|' + freq + '|' + excessMode;
+    if (fpCache[ck]) return fpCache[ck];
+    var isSpread = DATA.series[key].is_excess, adj = [];
+    for (var i = 0; i < raw.length; i++){
+      var r = raw[i].r, rf = DAILY_RF[raw[i].t];
+      if (rf != null){
+        if (excessMode){ if (!isSpread) r -= rf; } else if (isSpread){ r += rf; }
+      }
+      adj.push({ t: raw[i].t, r: r });
+    }
+    var out = [];
+    if (freq === 'D'){
+      for (var a = 0; a < adj.length; a++) out.push({ d: new Date(adj[a].t), r: adj[a].r });
+    } else {
+      var cur = null, sumLog = 0, lastT = 0;
+      for (var b = 0; b < adj.length; b++){
+        var wk = Math.floor((Math.floor(adj[b].t / 86400000) + 3) / 7);   // Monday-based calendar weeks
+        if (wk !== cur){
+          if (cur !== null) out.push({ d: new Date(lastT), r: Math.exp(sumLog) - 1 });
+          cur = wk; sumLog = 0;
+        }
+        sumLog += Math.log(1 + adj[b].r); lastT = adj[b].t;
+      }
+      if (cur !== null) out.push({ d: new Date(lastT), r: Math.exp(sumLog) - 1 });
+    }
+    fpCache[ck] = out;
+    return out;
+  }
+  // Annualized mean/vol and their standard errors over the selected range, at the active frequency.
+  function freqMoments(key, win){
+    var h = periodsPerYear();
+    var xs = freqPoints(key).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+      .map(function(p){ return logMode ? Math.log(1 + p.r) : p.r; });
+    var n = xs.length;
+    if (n < 3) return null;
+    var m = xs.reduce(function(a,b){return a+b;},0) / n, sd = stdev(xs);
+    return { n: n, mean: m * h, vol: sd * Math.sqrt(h), seMean: sd * Math.sqrt(h) / Math.sqrt(n / h), seVol: sd * Math.sqrt(h) / Math.sqrt(2 * (n - 1)) };
+  }
+
   function cumulativeSeries(key){
     var pts = effectivePoints(key), nav = 1, out = [];
     for (var i=0;i<pts.length;i++){ nav *= (1+pts[i].r); out.push({d:pts[i].d, v:nav}); }
     return out;
   }
-  // Rolling annualized mean (log or simple, per logMode) and vol, plus the standard errors
-  // of each estimate for the current window length w: SE(mean,ann.) = sigma_ann / sqrt(w/12);
-  // SE(vol,ann.) ~= sigma_ann / sqrt(2*(w-1)).
+  // Rolling annualized mean (log or simple, per logMode) and vol at the active frequency, plus the
+  // standard errors of each estimate for the window of T periods: SE(mean,ann.) = sigma_ann / sqrt(T/h);
+  // SE(vol,ann.) ~= sigma_ann / sqrt(2*(T-1)). The window is held fixed in calendar time (win months),
+  // so T = win*h/12 periods. Running (prefix) sums keep daily data fast.
   function rollingStatsSeries(key, win){
     win = win || 12;
-    var pts = effectivePoints(key), out = [];
-    for (var i=win-1;i<pts.length;i++){
-      var slice = [];
-      for (var j=i-win+1;j<=i;j++) slice.push(logMode ? Math.log(1+pts[j].r) : pts[j].r);
-      var m = slice.reduce(function(a,b){return a+b;},0) / win;
-      var sd = stdev(slice);
-      var meanAnn = m * 12;
-      var volAnn = sd * Math.sqrt(12);
+    var h = periodsPerYear();
+    var T = freq === 'M' ? win : Math.max(2, Math.round(win * h / 12));
+    var pts = freqPoints(key), n = pts.length, out = [];
+    if (n < T) return out;
+    var S1 = new Float64Array(n + 1), S2 = new Float64Array(n + 1);
+    for (var i = 0; i < n; i++){
+      var x = logMode ? Math.log(1 + pts[i].r) : pts[i].r;
+      S1[i+1] = S1[i] + x; S2[i+1] = S2[i] + x * x;
+    }
+    for (var e = T; e <= n; e++){
+      var sum = S1[e] - S1[e-T], sq = S2[e] - S2[e-T], m = sum / T;
+      var variance = Math.max((sq - T * m * m) / (T - 1), 0);
+      var volAnn = Math.sqrt(variance) * Math.sqrt(h);
       out.push({
-        d: pts[i].d,
-        mean: meanAnn,
+        d: pts[e-1].d,
+        mean: m * h,
         vol: volAnn,
-        seMean: volAnn / Math.sqrt(win/12),
-        seVol: win > 1 ? volAnn / Math.sqrt(2*(win-1)) : 0
+        seMean: volAnn / Math.sqrt(T / h),
+        seVol: T > 1 ? volAnn / Math.sqrt(2 * (T - 1)) : 0
       });
     }
     return out;
@@ -477,12 +566,15 @@
         var label = document.createElement('label');
         label.className = 'legend-item';
         var cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.checked = visible[key];
+        var tabNow = document.querySelector('.tab.active').getAttribute('data-tab');
+        var noFreq = (tabNow === 'rolling' || tabNow === 'pattern') && !hasFreqData(key);
+        if (noFreq) label.style.opacity = '.45';
+        cb.type = 'checkbox'; cb.checked = visible[key]; cb.disabled = noFreq;
         cb.addEventListener('change', function(){ visible[key] = cb.checked; renderAll(); });
         var sw = document.createElement('span');
         sw.className = 'swatch'; sw.style.background = COLORS[key];
         label.appendChild(cb); label.appendChild(sw);
-        label.appendChild(document.createTextNode(DATA.series[key].label));
+        label.appendChild(document.createTextNode(DATA.series[key].label + (noFreq ? ' \u2014 monthly only' : '')));
         gdiv.appendChild(label);
       });
       el.appendChild(gdiv);
@@ -503,15 +595,15 @@
     (opts.bands || []).forEach(function(b){ allPts = allPts.concat(b.upper).concat(b.lower); });
     if (allPts.length === 0){ container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No series selected</div>'; return; }
 
-    var xMin = Math.min.apply(null, allPts.map(function(p){return p.d.getTime();}));
-    var xMax = Math.max.apply(null, allPts.map(function(p){return p.d.getTime();}));
+    var xMin = Infinity, xMax = -Infinity;
+    for (var q = 0; q < allPts.length; q++){ var tq = allPts[q].d.getTime(); if (tq < xMin) xMin = tq; if (tq > xMax) xMax = tq; }
     var logScale = !!opts.log;
     var yLo, yHi;
     if (opts.yMin != null && opts.yMax != null){
       yLo = opts.yMin; yHi = opts.yMax;
     } else {
-      var yVals = allPts.map(function(p){return p.v;});
-      var yMin = Math.min.apply(null, yVals), yMax = Math.max.apply(null, yVals);
+      var yMin = Infinity, yMax = -Infinity;
+      for (var q2 = 0; q2 < allPts.length; q2++){ var vq = allPts[q2].v; if (vq < yMin) yMin = vq; if (vq > yMax) yMax = vq; }
       if (logScale){ yMin = Math.max(yMin, 1e-6); }
       if (yMin === yMax){ yMin -= 1; yMax += 1; }
       var yPad = (yMax - yMin) * 0.08;
@@ -760,6 +852,11 @@
       renderAll();
     });
   }
+  function initFreq(){
+    document.querySelectorAll('.freq-select').forEach(function(sel){
+      sel.addEventListener('change', function(){ freq = sel.value; renderAll(); });
+    });
+  }
   function initFocusDropdown(){
     var sel = document.getElementById('focus-series');
     sel.innerHTML = '<option value="ALL">All series (legend selection, no bands)</option>' +
@@ -776,9 +873,9 @@
   // The span is a multiple of 20pp and the axis floor a multiple of 5pp, so ticks fall every 5pp or more.
   function sharedSpanDomains(meanArrays, volArrays){
     function range(arrs){
-      var vals = [];
-      arrs.forEach(function(arr){ arr.forEach(function(p){ vals.push(p.v); }); });
-      return vals.length ? { lo: Math.min.apply(null, vals), hi: Math.max.apply(null, vals) } : null;
+      var lo = Infinity, hi = -Infinity;
+      arrs.forEach(function(arr){ arr.forEach(function(p){ if (p.v < lo) lo = p.v; if (p.v > hi) hi = p.v; }); });
+      return lo <= hi ? { lo: lo, hi: hi } : null;
     }
     var m = range(meanArrays), v = range(volArrays);
     var ranges = [m, v].filter(Boolean);
@@ -799,27 +896,28 @@
   function renderRolling(){
     var win = windowBounds();
     var bandsCaption = document.getElementById('rolling-bands-caption');
+    var ci = document.getElementById('rolling-ci');
     var pctFmt0 = function(v){ return fmtPct(v,0); };
     var pctFmt1 = function(v){ return fmtPct(v,1); };
+    function inWin(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; }
 
     if (focusSeries === 'ALL'){
       bandsCaption.hidden = true;
+      ci.hidden = true;
       var keys = visibleKeys();
       var meanSeries = keys.map(function(k){
-        var pts = rollingSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
-        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
+        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: rollingSeries(k, rollWindow).filter(inWin) };
       });
       var volSeries = keys.map(function(k){
-        var pts = rollingVolSeries(k, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
-        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: pts };
+        return { key:k, label:DATA.series[k].label, color:COLORS[k], points: rollingVolSeries(k, rollWindow).filter(inWin) };
       });
       var dom = sharedSpanDomains(meanSeries.map(function(s){ return s.points; }), volSeries.map(function(s){ return s.points; }));
       renderLineChart('chart-rolling', meanSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.mean.lo, yMax: dom.mean.hi });
       renderLineChart('chart-rolling-vol', volSeries, { log:false, yFormat: pctFmt0, tooltipFormat: pctFmt1, yMin: dom.vol.lo, yMax: dom.vol.hi });
     } else {
       var key = focusSeries;
-      var stats = rollingStatsSeries(key, rollWindow).filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
-      var full = windowedStats(key, win.start, win.end);
+      var stats = rollingStatsSeries(key, rollWindow).filter(inWin);
+      var full = freqMoments(key, win);
       var meanPts = stats.map(function(p){ return {d:p.d, v:p.mean}; });
       var volPts = stats.map(function(p){ return {d:p.d, v:p.vol}; });
       var meanUpper = stats.map(function(p){ return {d:p.d, v:p.mean + 1.96*p.seMean}; });
@@ -840,6 +938,13 @@
         bands: [{ upper: volUpper, lower: volLower, color: color }],
         refLines: full ? [{ value: full.vol, color: color }] : []
       });
+      ci.hidden = false;
+      if (!stats.length){
+        ci.textContent = hasFreqData(key) ? 'No ' + freqWord() + ' window of this length fits inside the selected date range.' : DATA.series[key].label + ' has no daily source, so it is available at monthly frequency only.';
+      } else {
+        var last = stats[stats.length - 1];
+        ci.innerHTML = '95% CI half-width at the latest ' + rollWindow + '-month window (' + freqWord() + ' data): mean &plusmn;' + fmtPct(1.96 * last.seMean, 1) + ', vol &plusmn;' + fmtPct(1.96 * last.seVol, 1) + '.';
+      }
     }
   }
 
@@ -890,93 +995,67 @@
     return Math.exp(-0.5 * Math.pow((x - mean) / sd, 2)) / (sd * Math.sqrt(2 * Math.PI));
   }
 
+  // Return Pattern: each checked series is standardized by its own mean and SD over the selected range
+  // (log or simple returns per logMode), binned on a fixed +/-6 axis, and compared with one N(0,1) curve.
+  function patternStats(key, win){
+    var rets = freqPoints(key)
+      .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
+      .map(function(p){ return logMode ? Math.log(1+p.r) : p.r; });
+    if (rets.length < 5) return null;
+    var m = rets.reduce(function(a,b){return a+b;},0) / rets.length, sd = stdev(rets);
+    if (!(sd > 0)) return null;
+    return { key: key, color: COLORS[key], T: rets.length, z: rets.map(function(r){ return (r - m) / sd; }) };
+  }
+
   function renderPattern(){
-    var visible = visibleKeys();
     var container = document.getElementById('chart-pattern');
     container.innerHTML = '';
     var win = windowBounds();
-
-    // Fixed x-axis domain so it never shifts as series are toggled or the window changes.
-    var rMin = -0.30, rMax = 0.30;
-    var binCount = 30;
-    var binWidth = (rMax - rMin) / binCount;
-
-    // Histogram bars are drawn per series currently checked in the legend. Bins log monthly
-    // returns by default (logMode) or simple monthly returns when the simple-returns toggle is on.
-    var allStats = ORDER.map(function(k){
-      var rets = effectivePoints(k)
-        .filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; })
-        .map(function(p){ return logMode ? Math.log(1+p.r) : p.r; });
-      if (rets.length < 5) return null;
-      return { key:k, color: COLORS[k], rets: rets };
-    }).filter(Boolean);
-
-    if (allStats.length === 0){
-      container.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem;">No data in this window</div>';
-      return;
-    }
-
-    // Single reference normal curve, centered at 0% (not fit to the data's mean) with a
-    // standard deviation taken from the pooled monthly returns of all eight series, shown
-    // at all times regardless of which (if any) series are checked.
-    var pooled = [];
-    allStats.forEach(function(s){ pooled = pooled.concat(s.rets); });
-    var pooledMean = 0;
-    var pooledSd = stdev(pooled);
-
-    var barStats = allStats.filter(function(s){ return visible.indexOf(s.key) !== -1; });
+    var zMax = 6, binCount = 48, binWidth = 2 * zMax / binCount;
+    var stats = visibleKeys().map(function(k){ return patternStats(k, win); }).filter(Boolean);
 
     var W = container.clientWidth || 800, H = container.clientHeight || 320;
     var padL = 46, padR = 12, padT = 10, padB = 22;
     var plotW = W - padL - padR, plotH = H - padT - padB;
 
-    var maxDensity = normalPdf(pooledMean, pooledMean, pooledSd);
-    barStats.forEach(function(s){
+    var maxDensity = normalPdf(0, 0, 1);
+    stats.forEach(function(s){
       var counts = new Array(binCount).fill(0);
-      s.rets.forEach(function(r){
-        var clamped = Math.min(rMax, Math.max(rMin, r));
-        var idx = Math.min(binCount - 1, Math.max(0, Math.floor((clamped - rMin) / binWidth)));
+      s.z.forEach(function(z){
+        var idx = Math.min(binCount - 1, Math.max(0, Math.floor((z + zMax) / binWidth)));
         counts[idx]++;
       });
-      s.density = counts.map(function(c){ return c / (s.rets.length * binWidth); });
-      s.mean = s.rets.reduce(function(a,b){return a+b;},0) / s.rets.length;
-      s.sd = stdev(s.rets);
-      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density), normalPdf(s.mean, s.mean, s.sd));
+      s.density = counts.map(function(c){ return c / (s.z.length * binWidth); });
+      maxDensity = Math.max(maxDensity, Math.max.apply(null, s.density));
     });
-    maxDensity = maxDensity * 1.1 || 1;
+    maxDensity *= 1.1;
 
-    function xPix(r){ return padL + (r - rMin) / (rMax - rMin) * plotW; }
+    function xPix(z){ return padL + (z + zMax) / (2 * zMax) * plotW; }
     function yPix(d){ return padT + plotH - (d / maxDensity) * plotH; }
 
     var svgNS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-
-    var xTickCount = 6;
-    for (var i=0;i<=xTickCount;i++){
-      var rv = rMin + (rMax - rMin) * i / xTickCount;
-      var xx = xPix(rv);
-      var txt = document.createElementNS(svgNS,'text');
-      txt.setAttribute('x', xx); txt.setAttribute('y', H-4);
-      txt.setAttribute('class','axis-label'); txt.setAttribute('text-anchor','middle');
-      txt.textContent = fmtPct(rv, 0);
+    for (var z0 = -zMax; z0 <= zMax; z0 += 2){
+      var txt = document.createElementNS(svgNS, 'text');
+      txt.setAttribute('x', xPix(z0)); txt.setAttribute('y', H - 4);
+      txt.setAttribute('class', 'axis-label'); txt.setAttribute('text-anchor', 'middle');
+      txt.textContent = z0 + 'σ';
       svg.appendChild(txt);
     }
-    if (rMin < 0 && rMax > 0){
-      var zl = document.createElementNS(svgNS,'line');
-      zl.setAttribute('x1', xPix(0)); zl.setAttribute('x2', xPix(0));
-      zl.setAttribute('y1', padT); zl.setAttribute('y2', padT + plotH);
-      zl.setAttribute('stroke', 'var(--muted)'); zl.setAttribute('stroke-width','1');
-      svg.appendChild(zl);
-    }
+    var zl = document.createElementNS(svgNS, 'line');
+    zl.setAttribute('x1', xPix(0)); zl.setAttribute('x2', xPix(0));
+    zl.setAttribute('y1', padT); zl.setAttribute('y2', padT + plotH);
+    zl.setAttribute('stroke', 'var(--muted)'); zl.setAttribute('stroke-width', '1');
+    svg.appendChild(zl);
 
-    barStats.forEach(function(s){
-      for (var b=0; b<binCount; b++){
-        var x0 = xPix(rMin + b*binWidth), x1 = xPix(rMin + (b+1)*binWidth);
+    stats.forEach(function(s){
+      for (var b = 0; b < binCount; b++){
+        var x0 = xPix(-zMax + b * binWidth), x1 = xPix(-zMax + (b + 1) * binWidth);
         var yTop = yPix(s.density[b]), yBase = yPix(0);
-        var rect = document.createElementNS(svgNS,'rect');
-        rect.setAttribute('x', Math.min(x0, x1));
-        rect.setAttribute('width', Math.max(1, Math.abs(x1 - x0) - 1));
+        var rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', x0);
+        rect.setAttribute('width', Math.max(1, x1 - x0 - 1));
         rect.setAttribute('y', yTop);
         rect.setAttribute('height', Math.max(0, yBase - yTop));
         rect.setAttribute('fill', s.color);
@@ -985,36 +1064,44 @@
       }
     });
 
-    var steps = 80, curveD = '';
-    for (var i2=0;i2<=steps;i2++){
-      var rv2 = rMin + (rMax - rMin) * i2 / steps;
-      curveD += (i2===0?'M':'L') + xPix(rv2).toFixed(1) + ',' + yPix(normalPdf(rv2, pooledMean, pooledSd)).toFixed(2) + ' ';
+    var steps = 160, d = '';
+    for (var i = 0; i <= steps; i++){
+      var zz = -zMax + 2 * zMax * i / steps;
+      d += (i === 0 ? 'M' : 'L') + xPix(zz).toFixed(1) + ',' + yPix(normalPdf(zz, 0, 1)).toFixed(2) + ' ';
     }
-    var curvePath = document.createElementNS(svgNS,'path');
-    curvePath.setAttribute('d', curveD);
-    curvePath.setAttribute('fill','none');
-    curvePath.setAttribute('stroke', 'var(--ink)');
-    curvePath.setAttribute('stroke-width','1.6');
-    curvePath.setAttribute('stroke-dasharray','4,3');
-    svg.appendChild(curvePath);
-
-    // Per-series fitted normal curve, only drawn for series currently checked in the legend.
-    barStats.forEach(function(s){
-      var d = '';
-      for (var i3=0;i3<=steps;i3++){
-        var rv3 = rMin + (rMax - rMin) * i3 / steps;
-        d += (i3===0?'M':'L') + xPix(rv3).toFixed(1) + ',' + yPix(normalPdf(rv3, s.mean, s.sd)).toFixed(2) + ' ';
-      }
-      var path = document.createElementNS(svgNS,'path');
-      path.setAttribute('d', d);
-      path.setAttribute('fill','none');
-      path.setAttribute('stroke', s.color);
-      path.setAttribute('stroke-width','1.6');
-      path.setAttribute('stroke-dasharray','4,3');
-      svg.appendChild(path);
-    });
-
+    var curve = document.createElementNS(svgNS, 'path');
+    curve.setAttribute('d', d); curve.setAttribute('fill', 'none');
+    curve.setAttribute('stroke', 'var(--ink)'); curve.setAttribute('stroke-width', '1.6');
+    curve.setAttribute('stroke-dasharray', '4,3');
+    svg.appendChild(curve);
     container.appendChild(svg);
+
+    renderTailTable(stats);
+  }
+
+  // Tail counts: observed |z| > k against the normal model's 2*T*Phi(-k); h periods per year at the active frequency.
+  function renderTailTable(stats){
+    var el = document.getElementById('pattern-tails');
+    document.querySelectorAll('.pattern-freq-word').forEach(function(w){ w.textContent = freqWord(); });
+    if (!stats.length){ el.innerHTML = '<div style="padding:10px 0;color:var(--muted);font-size:.8rem;">Select a series in the legend above to see tail counts.</div>'; return; }
+    var h = periodsPerYear();
+    var html = '<table class="sim-table"><tr><th>|z| &gt;</th><th>Normal model says once every</th>' +
+      stats.map(function(s){ return '<th style="color:' + s.color + '">' + s.key + '<br>actual (normal expects)</th>'; }).join('') + '</tr>';
+    [2, 3, 4, 5].forEach(function(k){
+      var p = 2 * normCdf(-k), years = 1 / p / h;
+      var yTxt = years < 100 ? years.toFixed(1) : Math.round(years).toLocaleString();
+      html += '<tr><td>' + k + '&sigma;</td><td>&asymp; ' + yTxt + ' years</td>';
+      stats.forEach(function(s){
+        var actual = 0;
+        s.z.forEach(function(z){ if (Math.abs(z) > k) actual++; });
+        var exp = s.T * p;
+        var expTxt = exp < 0.1 ? exp.toExponential(1) : exp.toFixed(1);
+        html += '<td>' + actual + ' (' + expTxt + ')</td>';
+      });
+      html += '</tr>';
+    });
+    html += '<tr><td>T</td><td>' + freqWord() + ' observations</td>' + stats.map(function(s){ return '<td>' + s.T + '</td>'; }).join('') + '</tr>';
+    el.innerHTML = html + '</table>';
   }
 
   // ---------- simulation tab (Lecture 8) ----------
@@ -1354,6 +1441,10 @@
       if (el) el.textContent = noteWithMoment;
     });
     var active = document.querySelector('.tab.active').getAttribute('data-tab');
+    document.querySelectorAll('.freq-select').forEach(function(sel){ sel.value = freq; });
+    Array.prototype.forEach.call(document.getElementById('focus-series').options, function(o){
+      o.disabled = o.value !== 'ALL' && !hasFreqData(o.value);
+    });
     if (active === 'growth') renderGrowth();
     else if (active === 'rolling') renderRolling();
     else if (active === 'corr') renderCorr();
@@ -1378,6 +1469,7 @@
   initRangeSlider();
   initRollSlider();
   initFocusDropdown();
+  initFreq();
   initSim();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
