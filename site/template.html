@@ -195,6 +195,13 @@
     <h2>Rolling <span class="roll-window-val">120</span>-month annualized volatility</h2>
     <div class="chart" id="chart-rolling-vol"></div>
     <p class="cap">Annualized standard deviation of monthly returns over the trailing <span class="roll-window-val">120</span> months, recalculated each month. Try shortening the window above: returns swing wildly while volatility stays comparatively stable — a reminder that risk is far more predictable than return.<span id="note-rolling-vol"></span></p>
+    <div id="rolling-shape" hidden>
+      <h2>Rolling <span class="roll-window-val">120</span>-month skewness</h2>
+      <div class="chart" id="chart-rolling-skew"></div>
+      <h2>Rolling <span class="roll-window-val">120</span>-month excess kurtosis</h2>
+      <div class="chart" id="chart-rolling-kurt"></div>
+      <p class="cap">Sample skewness and excess kurtosis over the trailing window, using the same definitions as Excel&rsquo;s SKEW() and KURT() so the numbers can be reproduced in a spreadsheet. The grey band is the &plusmn;1.96 SE range a sample of T normal draws would produce, SE(skew) &asymp; &radic;(6/T) and SE(excess kurtosis) &asymp; &radic;(24/T); it assumes normality, and under fat tails the true SE of kurtosis is much larger. Red shading marks 1929&ndash;32, Oct 1987, 2000&ndash;02, Sep 2008&ndash;Mar 2009 and Mar 2020. Single-series mode only.</p>
+    </div>
     <p class="cap" id="rolling-ci" hidden></p>
     <p class="cap band-caption" id="rolling-bands-caption" hidden>Both estimates use the same data. The mean's uncertainty depends on how many years you have; the vol's depends on how many observations.</p>
   </section>
@@ -464,6 +471,34 @@
     }
     return out;
   }
+  // Rolling sample skewness and excess kurtosis with Excel's SKEW() and KURT() definitions,
+  // from running power sums of demeaned returns (demeaning keeps the 4th-moment arithmetic well conditioned).
+  function rollingShapeSeries(key, win){
+    var h = periodsPerYear();
+    var T = freq === 'M' ? win : Math.max(2, Math.round(win * h / 12));
+    var pts = freqPoints(key), n = pts.length, out = [];
+    if (T < 4 || n < T) return { T: T, pts: out };
+    var xs = new Float64Array(n), g = 0, i;
+    for (i = 0; i < n; i++){ xs[i] = logMode ? Math.log(1 + pts[i].r) : pts[i].r; g += xs[i]; }
+    g /= n;
+    var S1 = new Float64Array(n+1), S2 = new Float64Array(n+1), S3 = new Float64Array(n+1), S4 = new Float64Array(n+1);
+    for (i = 0; i < n; i++){
+      var x = xs[i] - g, x2 = x * x;
+      S1[i+1] = S1[i] + x; S2[i+1] = S2[i] + x2; S3[i+1] = S3[i] + x2 * x; S4[i+1] = S4[i] + x2 * x2;
+    }
+    for (var e = T; e <= n; e++){
+      var s1 = S1[e] - S1[e-T], s2 = S2[e] - S2[e-T], s3 = S3[e] - S3[e-T], s4 = S4[e] - S4[e-T], mc = s1 / T;
+      var m2 = s2 - T * mc * mc;
+      var m3 = s3 - 3 * mc * s2 + 2 * T * mc * mc * mc;
+      var m4 = s4 - 4 * mc * s3 + 6 * mc * mc * s2 - 3 * T * mc * mc * mc * mc;
+      var sd = Math.sqrt(m2 / (T - 1));
+      if (!(sd > 0)) continue;
+      var skew = T / ((T - 1) * (T - 2)) * m3 / (sd * sd * sd);
+      var kurt = (T * (T + 1)) / ((T - 1) * (T - 2) * (T - 3)) * m4 / (sd * sd * sd * sd) - 3 * (T - 1) * (T - 1) / ((T - 2) * (T - 3));
+      out.push({ d: pts[e-1].d, skew: skew, kurt: kurt });
+    }
+    return { T: T, pts: out };
+  }
   function rollingSeries(key, win){
     return rollingStatsSeries(key, win).map(function(p){ return {d:p.d, v:p.mean}; });
   }
@@ -693,6 +728,17 @@
       svg.appendChild(zl);
     }
 
+    // shaded vertical spans (e.g. crisis periods)
+    (opts.spans || []).forEach(function(sp){
+      var x0 = Math.max(xPix(Math.max(sp.start, xMin)), padL), x1 = Math.min(xPix(Math.min(sp.end, xMax)), W - padR);
+      if (sp.end < xMin || sp.start > xMax || x1 < x0) return;
+      var r = document.createElementNS(svgNS, 'rect');
+      r.setAttribute('x', x0); r.setAttribute('width', Math.max(2, x1 - x0));
+      r.setAttribute('y', padT); r.setAttribute('height', plotH);
+      r.setAttribute('fill', sp.color || 'var(--neg)'); r.setAttribute('fill-opacity', '0.14');
+      svg.appendChild(r);
+    });
+
     // shaded +/-1.96 SE confidence bands (single-series rolling mode)
     (opts.bands || []).forEach(function(b){
       if (!b.upper.length) return;
@@ -920,6 +966,33 @@
     return { mean: place(m, false), vol: place(v, true) };
   }
 
+  var CRISES = [
+    { start: Date.UTC(1929,0,1), end: Date.UTC(1932,11,31) },
+    { start: Date.UTC(1987,9,1), end: Date.UTC(1987,10,1) },
+    { start: Date.UTC(2000,0,1), end: Date.UTC(2002,11,31) },
+    { start: Date.UTC(2008,8,1), end: Date.UTC(2009,2,31) },
+    { start: Date.UTC(2020,2,1), end: Date.UTC(2020,2,31) }
+  ];
+  function renderRollingShape(key, win, color){
+    var wrap = document.getElementById('rolling-shape');
+    var res = rollingShapeSeries(key, rollWindow);
+    var pts = res.pts.filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+    wrap.hidden = false;
+    var fmt2 = function(v){ return v.toFixed(2); };
+    function draw(id, field, se, label){
+      var series = pts.map(function(p){ return { d: p.d, v: p[field] }; });
+      var band = 1.96 * se;
+      var span = pts.length ? [{ d: pts[0].d, v: band }, { d: pts[pts.length-1].d, v: band }] : [];
+      var low = pts.length ? [{ d: pts[0].d, v: -band }, { d: pts[pts.length-1].d, v: -band }] : [];
+      renderLineChart(id, [{ key: key, label: label, color: color, points: series }], {
+        log: false, yFormat: fmt2, tooltipFormat: fmt2, spans: CRISES,
+        bands: [{ upper: span, lower: low, color: 'var(--muted)' }]
+      });
+    }
+    draw('chart-rolling-skew', 'skew', Math.sqrt(6 / res.T), 'Skewness');
+    draw('chart-rolling-kurt', 'kurt', Math.sqrt(24 / res.T), 'Excess kurtosis');
+  }
+
   function renderRolling(){
     var win = windowBounds();
     var bandsCaption = document.getElementById('rolling-bands-caption');
@@ -931,6 +1004,7 @@
     if (focusSeries === 'ALL'){
       bandsCaption.hidden = true;
       ci.hidden = true;
+      document.getElementById('rolling-shape').hidden = true;
       var keys = visibleKeys();
       var meanSeries = keys.map(function(k){
         return { key:k, label:DATA.series[k].label, color:COLORS[k], points: rollingSeries(k, rollWindow).filter(inWin) };
@@ -965,6 +1039,7 @@
         bands: [{ upper: volUpper, lower: volLower, color: color }],
         refLines: full ? [{ value: full.vol, color: color }] : []
       });
+      renderRollingShape(key, win, color);
       ci.hidden = false;
       if (!stats.length){
         ci.textContent = hasFreqData(key) ? 'No ' + freqWord() + ' window of this length fits inside the selected date range.' : DATA.series[key].label + ' has no daily source, so it is available at monthly frequency only.';
