@@ -210,6 +210,23 @@
     <h2>Pairwise correlation of monthly returns</h2>
     <div id="corr-table"></div>
     <p class="cap">Computed over each pair's overlapping monthly history within the selected date range. Values near +1 move together; values near 0 or negative are diversifying. Use the legend above to change which series are included.<span id="note-corr"></span></p>
+    <h2>Rolling correlation</h2>
+    <div class="window-slider">
+      <span>Pair:</span>
+      <select id="rc-a"></select>
+      <span>vs.</span>
+      <select id="rc-b"></select>
+    </div>
+    <div class="window-slider">
+      <span>Return frequency:</span>
+      <select class="freq-select"><option value="M">Monthly</option><option value="W">Weekly</option><option value="D">Daily</option></select>
+      <span id="rc-window-note"></span>
+    </div>
+    <div class="chart" id="chart-rolcorr"></div>
+    <h2>Rolling volatility of the first series</h2>
+    <div class="chart" id="chart-rolcorr-vol"></div>
+    <p class="cap" id="rolcorr-readout" style="font-size:.8rem;"></p>
+    <p class="cap">Correlation between the two series over a trailing window (36 months monthly, 52 weeks weekly, 252 days daily), with the first series&rsquo; rolling annualized volatility underneath. The dashed line is the full-sample correlation over the selected date range. Correlations are not constant, and they tend to rise when volatility spikes (red shading marks crises): diversification is weakest exactly when it is needed. The static table above uses the whole date range at once.</p>
   </section>
 
   <section class="panel hidden" id="panel-pattern">
@@ -1092,6 +1109,79 @@
     el.innerHTML = html;
   }
 
+  // ---------- rolling correlation (Fact 6) ----------
+  var rcA = 'SPX', rcB = 'BOND';
+  function rcWindow(){ return freq === 'D' ? 252 : (freq === 'W' ? 52 : 36); }
+  function rollingCorrSeries(a, b){
+    var h = periodsPerYear(), T = rcWindow();
+    var pb = freqPoints(b), mb = {};
+    pb.forEach(function(p){ mb[p.d.getTime()] = p.r; });
+    var dates = [], xs = [], ys = [];
+    freqPoints(a).forEach(function(p){
+      var rb = mb[p.d.getTime()];
+      if (rb == null) return;
+      dates.push(p.d);
+      xs.push(logMode ? Math.log(1 + p.r) : p.r);
+      ys.push(logMode ? Math.log(1 + rb) : rb);
+    });
+    var n = dates.length, out = [];
+    if (n < T) return { T: T, dates: dates, xs: xs, ys: ys, pts: out };
+    var gx = 0, gy = 0, i;
+    for (i = 0; i < n; i++){ gx += xs[i]; gy += ys[i]; }
+    gx /= n; gy /= n;
+    var Sx = new Float64Array(n+1), Sy = new Float64Array(n+1), Sxx = new Float64Array(n+1), Syy = new Float64Array(n+1), Sxy = new Float64Array(n+1);
+    for (i = 0; i < n; i++){
+      var x = xs[i] - gx, y = ys[i] - gy;
+      Sx[i+1] = Sx[i] + x; Sy[i+1] = Sy[i] + y; Sxx[i+1] = Sxx[i] + x*x; Syy[i+1] = Syy[i] + y*y; Sxy[i+1] = Sxy[i] + x*y;
+    }
+    for (var e = T; e <= n; e++){
+      var sx = Sx[e]-Sx[e-T], sy = Sy[e]-Sy[e-T], sxx = Sxx[e]-Sxx[e-T], syy = Syy[e]-Syy[e-T], sxy = Sxy[e]-Sxy[e-T];
+      var vx = sxx - sx*sx/T, vy = syy - sy*sy/T, c = sxy - sx*sy/T;
+      if (!(vx > 0) || !(vy > 0)) continue;
+      out.push({ d: dates[e-1], corr: c / Math.sqrt(vx*vy), vol: Math.sqrt(vx / (T-1)) * Math.sqrt(h) });
+    }
+    return { T: T, dates: dates, xs: xs, ys: ys, pts: out };
+  }
+  function renderRollingCorr(){
+    var readout = document.getElementById('rolcorr-readout');
+    document.getElementById('rc-window-note').textContent = 'window: ' + rcWindow() + ' ' + (freq === 'D' ? 'days' : (freq === 'W' ? 'weeks' : 'months'));
+    Array.prototype.forEach.call(document.getElementById('rc-a').options, function(o){ o.disabled = !hasFreqData(o.value); });
+    Array.prototype.forEach.call(document.getElementById('rc-b').options, function(o){ o.disabled = !hasFreqData(o.value); });
+    if (rcA === rcB){
+      ['chart-rolcorr','chart-rolcorr-vol'].forEach(function(id){ document.getElementById(id).innerHTML = ''; });
+      readout.textContent = 'Pick two different series.'; return;
+    }
+    var win = windowBounds();
+    var res = rollingCorrSeries(rcA, rcB);
+    var pts = res.pts.filter(function(p){ return p.d.getTime() >= win.start && p.d.getTime() <= win.end; });
+    if (!pts.length){
+      ['chart-rolcorr','chart-rolcorr-vol'].forEach(function(id){ document.getElementById(id).innerHTML = ''; });
+      readout.textContent = (!hasFreqData(rcA) || !hasFreqData(rcB)) ? 'One of these series has no daily source, so the pair is available at monthly frequency only.' : 'No ' + freqWord() + ' window of ' + rcWindow() + ' observations fits the overlap of these two series within the selected date range.';
+      return;
+    }
+    var inWin = [], inX = [], inY = [];
+    res.dates.forEach(function(d, i){ if (d.getTime() >= win.start && d.getTime() <= win.end){ inX.push(res.xs[i]); inY.push(res.ys[i]); } });
+    var full = inX.length > 6 ? pearson(inX, inY) : null;
+    var colA = COLORS[rcA], nameA = DATA.series[rcA].label, nameB = DATA.series[rcB].label;
+    renderLineChart('chart-rolcorr', [{ key: rcA, label: 'Correlation', color: colA, points: pts.map(function(p){ return { d: p.d, v: p.corr }; }) }], {
+      log: false, yMin: -1, yMax: 1, yFormat: function(v){ return v.toFixed(1); }, tooltipFormat: function(v){ return v.toFixed(2); },
+      spans: CRISES, refLines: full == null ? [] : [{ value: full, color: colA }]
+    });
+    renderLineChart('chart-rolcorr-vol', [{ key: rcA, label: 'Vol', color: colA, points: pts.map(function(p){ return { d: p.d, v: p.vol }; }) }], {
+      log: false, yFormat: function(v){ return fmtPct(v, 0); }, tooltipFormat: function(v){ return fmtPct(v, 1); }, spans: CRISES
+    });
+    var lo = pts.reduce(function(m, p){ return Math.min(m, p.corr); }, 1), hi = pts.reduce(function(m, p){ return Math.max(m, p.corr); }, -1);
+    readout.innerHTML = '<strong>' + nameA + '</strong> vs. <strong>' + nameB + '</strong>, ' + freqWord() + ' data: rolling correlation ranges from ' + lo.toFixed(2) + ' to ' + hi.toFixed(2) + (full == null ? '' : ' around a full-sample ' + full.toFixed(2)) + '.';
+  }
+  function initRollingCorr(){
+    ['rc-a','rc-b'].forEach(function(id){
+      var sel = document.getElementById(id);
+      sel.innerHTML = ORDER.map(function(k){ return '<option value="'+k+'">'+DATA.series[k].label+'</option>'; }).join('');
+      sel.value = id === 'rc-a' ? rcA : rcB;
+      sel.addEventListener('change', function(){ if (id === 'rc-a') rcA = sel.value; else rcB = sel.value; renderAll(); });
+    });
+  }
+
   function normalPdf(x, mean, sd){
     if (sd <= 0) return 0;
     return Math.exp(-0.5 * Math.pow((x - mean) / sd, 2)) / (sd * Math.sqrt(2 * Math.PI));
@@ -1603,7 +1693,7 @@
     });
     if (active === 'growth') renderGrowth();
     else if (active === 'rolling') renderRolling();
-    else if (active === 'corr') renderCorr();
+    else if (active === 'corr'){ renderCorr(); renderRollingCorr(); }
     else if (active === 'sim') renderSim();
     else if (active === 'acf') renderACF();
     else renderPattern();
@@ -1628,6 +1718,7 @@
   initFocusDropdown();
   initFreq();
   initACF();
+  initRollingCorr();
   initSim();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
