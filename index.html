@@ -89,6 +89,12 @@
   .sim-outputs h2{margin-top:6px;}
   .sim-outputs .cap{margin-bottom:14px;}
   .sim-legend{display:flex; flex-wrap:wrap; gap:12px; font-size:.72rem; color:var(--muted); margin:6px 0 0;}
+  .predict-box{background:var(--card); border:1px solid var(--accent); border-radius:10px; padding:12px 14px; margin:0 0 14px; font-size:.82rem;}
+  .predict-box input[type=number]{background:var(--bg); color:var(--ink); border:1px solid var(--border); border-radius:6px; padding:4px 6px; width:90px; font-family:inherit;}
+  .predict-box button{background:var(--accent); color:var(--card); border:none; border-radius:6px; padding:5px 12px; cursor:pointer; font-family:inherit; font-size:.8rem; margin-left:6px;}
+  .predict-box button.secondary{background:none; color:var(--accent); border:1px solid var(--accent);}
+  .predict-box .q{margin:0 0 8px; font-weight:600;}
+  .predict-box .res{margin:0; color:var(--ink);}
   .acf-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
   .acf-grid h2{margin-top:6px; font-size:.95rem;}
   @media (max-width:760px){ .sim-grid,.acf-grid{grid-template-columns:1fr;} }
@@ -142,6 +148,11 @@
       <span id="range-start-label"></span>
       <span id="range-end-label"></span>
     </div>
+    <div class="window-slider">
+      <span>Load lecture example:</span>
+      <select id="preset"></select>
+    </div>
+    <p class="cap" id="preset-note" style="margin:-6px 0 14px;"></p>
     <label class="excess-toggle">
       <input type="checkbox" id="excess-toggle">
       <span>Excess returns net for the 1-month T-bill rate</span>
@@ -153,6 +164,10 @@
     <label class="excess-toggle">
       <input type="checkbox" id="simple-toggle">
       <span>Use simple (non-log) returns for vol, the rolling charts, the histogram, and the tiles</span>
+    </label>
+    <label class="excess-toggle">
+      <input type="checkbox" id="predict-toggle">
+      <span>Predict first: hide the Rolling and Return Pattern charts until I enter a guess</span>
     </label>
   </section>
 
@@ -189,6 +204,8 @@
       <span>Focus on one series:</span>
       <select id="focus-series"></select>
     </div>
+    <div class="predict-box" id="predict-rolling" hidden></div>
+    <div id="rolling-body">
     <h2>Rolling <span class="roll-window-val">120</span>-month annualized return</h2>
     <div class="chart" id="chart-rolling"></div>
     <p class="cap">Annualized mean log return over the trailing <span class="roll-window-val">120</span> months — (12/w) times the sum of the last w monthly log returns — recalculated each month, over the selected date range. In single-series mode, the shaded band is a &plusmn;1.96 SE (95%) confidence interval for that window length, and the dashed line is the full-sample estimate over the selected date range.<span id="note-rolling"></span></p>
@@ -204,6 +221,7 @@
     </div>
     <p class="cap" id="rolling-ci" hidden></p>
     <p class="cap band-caption" id="rolling-bands-caption" hidden>Both estimates use the same data. The mean's uncertainty depends on how many years you have; the vol's depends on how many observations.</p>
+    </div>
   </section>
 
   <section class="panel hidden" id="panel-corr">
@@ -235,12 +253,15 @@
       <select class="freq-select"><option value="M">Monthly</option><option value="W">Weekly</option><option value="D">Daily</option></select>
       <span>calendar window held fixed; weekly and daily series are built from daily data</span>
     </div>
+    <div class="predict-box" id="predict-pattern" hidden></div>
+    <div id="pattern-body">
     <h2>Distribution of standardized <span class="pattern-freq-word">monthly</span> returns (z-scores)</h2>
     <div class="chart" id="chart-pattern" style="height:320px;"></div>
     <p class="cap">Each checked series is standardized by its own mean and standard deviation over the selected date range, so a z-score of 3 means &ldquo;three of that series&rsquo; own standard deviations from its mean&rdquo;. The dashed curve is a single N(0,1) normal. Because every series is on the same scale, departures from the curve measure fat tails and skew, not differences in volatility. The x-axis is fixed at &plusmn;6; z-scores beyond it pile into the end bins.<span id="note-pattern"></span></p>
     <h2>Tail counts</h2>
     <div id="pattern-tails"></div>
     <p class="cap">For each k, the number of months with |z| &gt; k, next to the count a normal distribution predicts, 2T&Phi;(&minus;k), and how often the normal model says such a month should occur. A series with fat tails shows many more extreme months than the normal expects, and the gap widens as k grows. Recomputes with the date range and the legend selection.</p>
+    </div>
   </section>
 
   <section class="panel hidden" id="panel-acf">
@@ -882,6 +903,7 @@
     return { start: GLOBAL_MONTHS[windowRange.startIdx].getTime(), end: GLOBAL_MONTHS[windowRange.endIdx].getTime() };
   }
 
+  var updateRangeUI = function(){};
   function initRangeSlider(){
     var startInput = document.getElementById('range-start');
     var endInput = document.getElementById('range-end');
@@ -899,6 +921,7 @@
       document.getElementById('range-end-label').innerHTML = 'To <strong>' + fmtDate(GLOBAL_MONTHS[windowRange.endIdx]) + '</strong>';
     }
     updateFill();
+    updateRangeUI = function(){ startInput.value = windowRange.startIdx; endInput.value = windowRange.endIdx; updateFill(); };
 
     startInput.addEventListener('input', function(){
       var v = Math.min(+startInput.value, windowRange.endIdx);
@@ -1057,6 +1080,7 @@
         refLines: full ? [{ value: full.vol, color: color }] : []
       });
       renderRollingShape(key, win, color);
+      predict.rollFact = stats.length ? stats[stats.length - 1] : null;
       ci.hidden = false;
       if (!stats.length){
         ci.textContent = hasFreqData(key) ? 'No ' + freqWord() + ' window of this length fits inside the selected date range.' : DATA.series[key].label + ' has no daily source, so it is available at monthly frequency only.';
@@ -1268,6 +1292,11 @@
     svg.appendChild(curve);
     container.appendChild(svg);
 
+    var first = stats[0];
+    if (first){
+      var cnt = 0; first.z.forEach(function(z){ if (Math.abs(z) > 4) cnt++; });
+      predict.patternFact = { count: cnt, T: first.T, expected: first.T * 2 * normCdf(-4) };
+    } else predict.patternFact = null;
     renderTailTable(stats);
   }
 
@@ -1294,6 +1323,88 @@
     });
     html += '<tr><td>T</td><td>' + freqWord() + ' observations</td>' + stats.map(function(s){ return '<td>' + s.T + '</td>'; }).join('') + '</tr>';
     el.innerHTML = html + '</table>';
+  }
+
+  // ---------- lecture presets ----------
+  function monthKeyOf(d){ return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2); }
+  var PRESETS = {
+    l6: {
+      label: 'Lecture 6: estimation risk (US Market, 10-year window)',
+      tab: 'rolling', keys: ['SPX'], focus: 'SPX', roll: 120, freq: 'M', range: null, monthly: false,
+      note: 'Rolling 10-year mean vs. vol for the US Market over the full sample: the mean’s ±1.96 SE band is wide and the vol’s is narrow, on the same scale.'
+    },
+    l7: {
+      label: 'Lecture 7: US Market 1926–2014, monthly log returns',
+      tab: 'pattern', keys: ['SPX'], focus: 'SPX', roll: 120, freq: 'M', range: ['1926-07', '2014-12'], monthly: true,
+      note: 'Slides: mean ≈ 0.93%/month, SD ≈ 5.39%/month, T = 1,068; annualized SE(mean) ≈ 2.0%, SE(vol) ≈ 0.4%. This dashboard’s CRSP series starts July 1926 (T = 1,062), so the SD and SEs match closely and the mean differs slightly. The tile shows monthly statistics.'
+    }
+  };
+  function initPresets(){
+    var sel = document.getElementById('preset');
+    sel.innerHTML = '<option value="">Choose an example…</option>' + Object.keys(PRESETS).map(function(k){ return '<option value="' + k + '">' + PRESETS[k].label + '</option>'; }).join('');
+    sel.addEventListener('change', function(){ if (sel.value) applyPreset(sel.value); });
+  }
+  function applyPreset(id){
+    var ps = PRESETS[id];
+    // reset to the course conventions, then apply the example's own settings
+    excessMode = false; logMode = true; monthlyMode = !!ps.monthly; freq = ps.freq;
+    document.getElementById('excess-toggle').checked = false;
+    document.getElementById('simple-toggle').checked = false;
+    document.getElementById('monthly-toggle').checked = !!ps.monthly;
+    ORDER.forEach(function(k){ visible[k] = ps.keys.indexOf(k) !== -1; });
+    focusSeries = ps.focus; document.getElementById('focus-series').value = focusSeries;
+    acfKey = ps.focus; document.getElementById('acf-series').value = acfKey;
+    rollWindow = ps.roll; document.getElementById('roll-window').value = rollWindow; updateRollLabels();
+    var a = 0, b = GLOBAL_MONTHS.length - 1;
+    if (ps.range){
+      a = GLOBAL_MONTHS.findIndex(function(d){ return monthKeyOf(d) === ps.range[0]; });
+      b = GLOBAL_MONTHS.findIndex(function(d){ return monthKeyOf(d) === ps.range[1]; });
+    }
+    windowRange.startIdx = Math.max(a, 0); windowRange.endIdx = b < 0 ? GLOBAL_MONTHS.length - 1 : b;
+    updateRangeUI();
+    document.getElementById('preset-note').textContent = ps.note;
+    document.querySelector('[data-tab="' + ps.tab + '"]').click();
+  }
+
+  // ---------- predict-first mode ----------
+  var predict = { on: false, rolling: null, pattern: null, rollFact: null, patternFact: null };
+  function predictBox(which, question, unit, answerHtml){
+    var box = document.getElementById('predict-' + which), body = document.getElementById(which + '-body');
+    var guess = predict[which];
+    if (!predict.on || (which === 'rolling' && focusSeries === 'ALL')){
+      box.hidden = true; body.hidden = false; return;
+    }
+    box.hidden = false;
+    if (guess == null){
+      body.hidden = true;
+      box.innerHTML = '<p class="q">' + question + '</p><input type="number" step="any" id="guess-' + which + '"> ' + unit +
+        '<button type="button" id="reveal-' + which + '">Reveal chart</button>';
+      document.getElementById('reveal-' + which).addEventListener('click', function(){
+        var v = parseFloat(document.getElementById('guess-' + which).value);
+        if (isNaN(v)) return;
+        predict[which] = v; renderAll();
+      });
+    } else {
+      body.hidden = false;
+      box.innerHTML = '<p class="res">You guessed <strong>' + guess + unit + '</strong>. ' + answerHtml(guess) + '</p><button type="button" class="secondary" id="again-' + which + '">New guess</button>';
+      document.getElementById('again-' + which).addEventListener('click', function(){ predict[which] = null; renderAll(); });
+    }
+  }
+  function applyPredict(){
+    var f = predict.rollFact;
+    predictBox('rolling', 'Before you look: for the series chosen below at the current window, how wide is the 95% band for the annualized mean, as a half-width in percentage points (±x%)? And how wide is it for the vol?', '% (mean half-width)', function(g){
+      return f ? 'At the latest window the 95% half-width is <strong>±' + fmtPct(1.96 * f.seMean, 1) + '</strong> for the mean and <strong>±' + fmtPct(1.96 * f.seVol, 1) + '</strong> for the vol.' : 'No window fits the selected range.';
+    });
+    var pf = predict.patternFact;
+    predictBox('pattern', 'Before you look: in this date range, how many ' + freqWord() + ' returns of the first checked series will be more than 4 standard deviations from its mean?', ' returns', function(g){
+      return pf ? 'Actual: <strong>' + pf.count + '</strong> of ' + pf.T.toLocaleString() + '; a normal distribution would predict about <strong>' + (pf.expected < 0.1 ? pf.expected.toExponential(1) : pf.expected.toFixed(1)) + '</strong>.' : 'Select a series first.';
+    });
+  }
+  function shortSampleNote(keys){
+    var short = [];
+    if (keys.indexOf('EM') !== -1) short.push('Emerging Markets (since 2003)');
+    if (keys.indexOf('EAFE') !== -1) short.push('Developed ex-US (since 2001)');
+    return short.length ? ' Short sample (' + short.join(' and ') + '): far fewer years than the other series, so the mean is estimated very noisily.' : '';
   }
 
   // ---------- autocorrelation (Facts 4 and 5) ----------
@@ -1686,6 +1797,10 @@
       if (el) el.textContent = noteWithMoment;
     });
     var active = document.querySelector('.tab.active').getAttribute('data-tab');
+    ['note-growth','note-corr'].forEach(function(id){ document.getElementById(id).textContent += shortSampleNote(visibleKeys().concat([rcA, rcB])); });
+    document.getElementById('note-rolling').textContent += shortSampleNote(focusSeries === 'ALL' ? visibleKeys() : [focusSeries]);
+    document.getElementById('note-pattern').textContent += shortSampleNote(visibleKeys());
+    document.getElementById('note-acf').textContent += shortSampleNote([acfKey]);
     document.querySelectorAll('.freq-select').forEach(function(sel){ sel.value = freq; });
     Array.prototype.forEach.call(document.getElementById('acf-series').options, function(o){ o.disabled = !hasFreqData(o.value); });
     Array.prototype.forEach.call(document.getElementById('focus-series').options, function(o){
@@ -1697,6 +1812,7 @@
     else if (active === 'sim') renderSim();
     else if (active === 'acf') renderACF();
     else renderPattern();
+    applyPredict();
   }
 
   document.getElementById('tabs').addEventListener('click', function(e){
@@ -1719,6 +1835,10 @@
   initFreq();
   initACF();
   initRollingCorr();
+  initPresets();
+  document.getElementById('predict-toggle').addEventListener('change', function(e){
+    predict.on = e.target.checked; predict.rolling = null; predict.pattern = null; renderAll();
+  });
   initSim();
   document.getElementById('excess-toggle').addEventListener('change', function(e){
     excessMode = e.target.checked;
