@@ -6,7 +6,7 @@ The dashboard is built around one lesson: **mean returns are estimated very nois
 
 ## Defaults and conventions
 
-Unless you change them: monthly data, **log** returns, **total** returns (not excess), annualized statistics, a 10-year rolling window, and the full date range. Every statistic is labeled annualized or monthly, log or simple, total or excess. Use **Load lecture example** (top of the page) to jump to a setup that matches a lecture.
+Unless you change them: monthly data, **log** returns, **total** returns (not excess), annualized statistics, a 10-year rolling window, and the full date range. Every statistic is labeled annualized or monthly, log or simple, total or excess.
 
 - **Date range slider**: sets the sample for every tab.
 - **Excess returns**: subtracts the 1-month T-bill rate from every series.

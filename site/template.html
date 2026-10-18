@@ -148,11 +148,6 @@
       <span id="range-start-label"></span>
       <span id="range-end-label"></span>
     </div>
-    <div class="window-slider">
-      <span>Load lecture example:</span>
-      <select id="preset"></select>
-    </div>
-    <p class="cap" id="preset-note" style="margin:-6px 0 14px;"></p>
     <label class="excess-toggle">
       <input type="checkbox" id="excess-toggle">
       <span>Excess returns net for the 1-month T-bill rate</span>
@@ -192,7 +187,7 @@
   <section class="panel hidden" id="panel-rolling">
     <div class="window-slider">
       <span>Rolling window:</span>
-      <input type="range" id="roll-window" min="1" max="240" value="120">
+      <input type="range" id="roll-window" min="2" max="240" value="120">
       <span id="roll-window-label"></span>
     </div>
     <div class="window-slider">
@@ -487,7 +482,7 @@
   function rollingStatsSeries(key, win){
     win = win || 12;
     var h = periodsPerYear();
-    var T = freq === 'M' ? win : Math.max(2, Math.round(win * h / 12));
+    var T = Math.max(2, freq === 'M' ? win : Math.round(win * h / 12));
     var pts = freqPoints(key), n = pts.length, out = [];
     if (n < T) return out;
     var S1 = new Float64Array(n + 1), S2 = new Float64Array(n + 1);
@@ -513,7 +508,7 @@
   // from running power sums of demeaned returns (demeaning keeps the 4th-moment arithmetic well conditioned).
   function rollingShapeSeries(key, win){
     var h = periodsPerYear();
-    var T = freq === 'M' ? win : Math.max(2, Math.round(win * h / 12));
+    var T = Math.max(2, freq === 'M' ? win : Math.round(win * h / 12));
     var pts = freqPoints(key), n = pts.length, out = [];
     if (T < 4 || n < T) return { T: T, pts: out };
     var xs = new Float64Array(n), g = 0, i;
@@ -903,7 +898,6 @@
     return { start: GLOBAL_MONTHS[windowRange.startIdx].getTime(), end: GLOBAL_MONTHS[windowRange.endIdx].getTime() };
   }
 
-  var updateRangeUI = function(){};
   function initRangeSlider(){
     var startInput = document.getElementById('range-start');
     var endInput = document.getElementById('range-end');
@@ -921,7 +915,6 @@
       document.getElementById('range-end-label').innerHTML = 'To <strong>' + fmtDate(GLOBAL_MONTHS[windowRange.endIdx]) + '</strong>';
     }
     updateFill();
-    updateRangeUI = function(){ startInput.value = windowRange.startIdx; endInput.value = windowRange.endIdx; updateFill(); };
 
     startInput.addEventListener('input', function(){
       var v = Math.min(+startInput.value, windowRange.endIdx);
@@ -1323,47 +1316,6 @@
     });
     html += '<tr><td>T</td><td>' + freqWord() + ' observations</td>' + stats.map(function(s){ return '<td>' + s.T + '</td>'; }).join('') + '</tr>';
     el.innerHTML = html + '</table>';
-  }
-
-  // ---------- lecture presets ----------
-  function monthKeyOf(d){ return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2); }
-  var PRESETS = {
-    l6: {
-      label: 'Lecture 6: estimation risk (US Market, 10-year window)',
-      tab: 'rolling', keys: ['SPX'], focus: 'SPX', roll: 120, freq: 'M', range: null, monthly: false,
-      note: 'Rolling 10-year mean vs. vol for the US Market over the full sample: the mean’s ±1.96 SE band is wide and the vol’s is narrow, on the same scale.'
-    },
-    l7: {
-      label: 'Lecture 7: US Market 1926–2014, monthly log returns',
-      tab: 'pattern', keys: ['SPX'], focus: 'SPX', roll: 120, freq: 'M', range: ['1926-07', '2014-12'], monthly: true,
-      note: 'Slides: mean ≈ 0.93%/month, SD ≈ 5.39%/month, T = 1,068; annualized SE(mean) ≈ 2.0%, SE(vol) ≈ 0.4%. This dashboard’s CRSP series starts July 1926 (T = 1,062), so the SD and SEs match closely and the mean differs slightly. The tile shows monthly statistics.'
-    }
-  };
-  function initPresets(){
-    var sel = document.getElementById('preset');
-    sel.innerHTML = '<option value="">Choose an example…</option>' + Object.keys(PRESETS).map(function(k){ return '<option value="' + k + '">' + PRESETS[k].label + '</option>'; }).join('');
-    sel.addEventListener('change', function(){ if (sel.value) applyPreset(sel.value); });
-  }
-  function applyPreset(id){
-    var ps = PRESETS[id];
-    // reset to the course conventions, then apply the example's own settings
-    excessMode = false; logMode = true; monthlyMode = !!ps.monthly; freq = ps.freq;
-    document.getElementById('excess-toggle').checked = false;
-    document.getElementById('simple-toggle').checked = false;
-    document.getElementById('monthly-toggle').checked = !!ps.monthly;
-    ORDER.forEach(function(k){ visible[k] = ps.keys.indexOf(k) !== -1; });
-    focusSeries = ps.focus; document.getElementById('focus-series').value = focusSeries;
-    acfKey = ps.focus; document.getElementById('acf-series').value = acfKey;
-    rollWindow = ps.roll; document.getElementById('roll-window').value = rollWindow; updateRollLabels();
-    var a = 0, b = GLOBAL_MONTHS.length - 1;
-    if (ps.range){
-      a = GLOBAL_MONTHS.findIndex(function(d){ return monthKeyOf(d) === ps.range[0]; });
-      b = GLOBAL_MONTHS.findIndex(function(d){ return monthKeyOf(d) === ps.range[1]; });
-    }
-    windowRange.startIdx = Math.max(a, 0); windowRange.endIdx = b < 0 ? GLOBAL_MONTHS.length - 1 : b;
-    updateRangeUI();
-    document.getElementById('preset-note').textContent = ps.note;
-    document.querySelector('[data-tab="' + ps.tab + '"]').click();
   }
 
   // ---------- predict-first mode ----------
@@ -1835,7 +1787,6 @@
   initFreq();
   initACF();
   initRollingCorr();
-  initPresets();
   document.getElementById('predict-toggle').addEventListener('change', function(e){
     predict.on = e.target.checked; predict.rolling = null; predict.pattern = null; renderAll();
   });
