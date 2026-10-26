@@ -1608,18 +1608,34 @@
     // ---- outcome table ----
     var hz = [5,10,15,20].filter(function(x){ return x <= h; });
     if (hz.indexOf(h) === -1) hz.push(h);
-    var tbl = '<table class="sim-table"><tr><th>Year</th><th>Mean</th><th>Median</th><th>5th pct</th><th>95th pct</th><th>P(V &lt; initial)</th>';
-    if (sim.err === 'none') tbl += '<th>P(V = 0)</th>';
-    else cases.forEach(function(c){ tbl += '<th>P(V = 0)<br>' + c.name + '</th>'; });
+    // 95% VaR and CVaR of the loss L = initial wealth - V(y); wealth is sorted ascending, so the worst 5% of losses are the lowest 5% of wealth
+    function varCvar(y){
+      var s = base.years[y].sorted, v95 = sim.w0 - base.years[y].p5, tsum = 0, cnt = 0;
+      for (var i = 0; i < s.length; i++){ var L = sim.w0 - s[i]; if (L >= v95){ tsum += L; cnt++; } }
+      return { v: v95, c: tsum / cnt };
+    }
+    function lossCell(L){ return fmtM(L) + ' (' + fmtP(L / sim.w0) + ')'; }
+    var vc = {}; hz.forEach(function(y){ vc[y] = varCvar(y); });
+    function row(label, f){
+      var r = '<tr><td>' + label + '</td>';
+      hz.forEach(function(y){ r += '<td>' + f(y) + '</td>'; });
+      return r + '</tr>';
+    }
+    var tbl = '<table class="sim-table"><tr><th>Statistic</th>';
+    hz.forEach(function(y){ tbl += '<th>Year ' + y + '</th>'; });
     tbl += '</tr>';
-    hz.forEach(function(y){
-      var b = base.years[y];
-      tbl += '<tr><td>' + y + '</td><td>' + fmtM(b.mean) + '</td><td>' + fmtM(b.median) + '</td><td>' + fmtM(b.p5) + '</td><td>' + fmtM(b.p95) + '</td><td>' + fmtP(b.pBelow) + '</td>';
-      cases.forEach(function(c){ tbl += '<td>' + fmtP(c.years[y].pZero) + '</td>'; });
-      tbl += '</tr>';
+    tbl += row('Mean', function(y){ return fmtM(base.years[y].mean); });
+    tbl += row('Median', function(y){ return fmtM(base.years[y].median); });
+    tbl += row('5th pct', function(y){ return fmtM(base.years[y].p5); });
+    tbl += row('95th pct', function(y){ return fmtM(base.years[y].p95); });
+    tbl += row('P(V &lt; initial)', function(y){ return fmtP(base.years[y].pBelow); });
+    cases.forEach(function(c){
+      tbl += row(sim.err === 'none' ? 'P(V = 0)' : 'P(V = 0), ' + c.name, function(y){ return fmtP(c.years[y].pZero); });
     });
+    tbl += row('95% VaR (loss)', function(y){ return lossCell(vc[y].v); });
+    tbl += row('95% CVaR (loss)', function(y){ return lossCell(vc[y].c); });
     document.getElementById('sim-table').innerHTML = tbl + '</table>';
-    document.getElementById('sim-table-cap').textContent = 'Initial wealth ' + fmtM(sim.w0) + '. Mean, median and percentiles are across simulated paths (central case). P(V = 0) is the probability of exhaustion.';
+    document.getElementById('sim-table-cap').textContent = 'Initial wealth ' + fmtM(sim.w0) + '. Mean, median and percentiles are across simulated paths (central case). P(V = 0) is the probability of exhaustion. VaR and CVaR are losses relative to initial wealth (percent of initial in parentheses): VaR is the loss exceeded in only 5% of paths, CVaR the average loss within that worst 5%. A negative value means even the tail ends above initial wealth.';
 
     // ---- terminal wealth histogram, VaR / CVaR ----
     var term = base.years[h], V = base.run.V[h];
